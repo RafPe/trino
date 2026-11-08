@@ -87,6 +87,7 @@ public class StatsCalculatorModule
             rules.add(new DynamicFilterSourceStatsRule());
             rules.add(new RemoteSourceStatsRule(normalizer));
             rules.add(new TopNRankingStatsRule(normalizer));
+            rules.add(new UnnestStatsRule());
 
             return rules.build();
         }
