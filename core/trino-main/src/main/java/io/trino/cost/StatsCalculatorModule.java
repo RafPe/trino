@@ -80,6 +80,7 @@ public class StatsCalculatorModule
             rules.add(new AggregationStatsRule(normalizer));
             rules.add(new UnionStatsRule(normalizer));
             rules.add(new AssignUniqueIdStatsRule());
+            rules.add(new GroupIdStatsRule(normalizer));
             rules.add(new SemiJoinStatsRule());
             rules.add(new RowNumberStatsRule(normalizer));
             rules.add(new SampleStatsRule(normalizer));
