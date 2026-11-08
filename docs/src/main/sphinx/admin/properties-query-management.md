@@ -232,6 +232,48 @@ is removed from the query history buffer and no longer available in the
 To store query events and therefore information about more queries in an
 external system you must use [an event listener](admin-event-listeners).
 
+## `query-manager.required-workers`
+
+- **Type:** {ref}`prop-type-integer`
+- **Default value:** `1`
+- **Minimum value:** `1`
+- **Session property:** `required_workers_count`
+
+The minimum number of active worker nodes that must be available before a query
+starts processing. While fewer nodes are available, the query waits in the
+`WAITING_FOR_RESOURCES` state for up to the duration configured with
+`query-manager.required-workers-max-wait`. Use this property to prevent queries
+from running on a partially started cluster, for example after a restart or
+while the cluster scales up.
+
+The coordinator counts as an active worker only if
+[`node-scheduler.include-coordinator`](/admin/properties-node-scheduler) is set
+to `true`.
+
+The following statements wait for only one active worker, regardless of this
+property:
+
+- `SELECT` queries that read only from internal catalogs, such as
+  `information_schema` schemas and the `system` catalog, or that read from no
+  tables at all.
+- Statements that the coordinator processes without distributed execution, such
+  as `CREATE TABLE`, `DROP TABLE`, `SET SESSION` and `USE`.
+
+The `RequiredWorkers` attribute of the
+`trino.execution:name=ClusterSizeMonitor` [JMX](/admin/jmx) MBean reports
+the highest number of required workers among the queries that are currently
+waiting, or `0` if no query is waiting.
+
+## `query-manager.required-workers-max-wait`
+
+- **Type:** {ref}`prop-type-duration`
+- **Default value:** `5m`
+- **Session property:** `required_workers_max_wait_time`
+
+The maximum time a query waits for the number of active workers configured with
+`query-manager.required-workers`. If not enough workers become available within
+this time, the query fails with the `GENERIC_INSUFFICIENT_RESOURCES` error.
+
 ## `query.remote-task.enable-adaptive-request-size`
 
 - **Type:** {ref}`prop-type-boolean`

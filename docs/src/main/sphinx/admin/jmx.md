@@ -43,6 +43,9 @@ A small subset of the available metrics are described below.
 
 - Active nodes:
   `trino.failuredetector:name=HeartbeatFailureDetector:ActiveCount`
+- Highest number of workers required by waiting queries, see
+  [](/admin/properties-query-management):
+  `trino.execution:name=ClusterSizeMonitor:RequiredWorkers`
 - Free memory (general pool):
   `trino.memory:type=ClusterMemoryPool:name=general:FreeDistributedBytes`
 - Cumulative count (since Trino started) of queries that ran out of memory and were killed:
