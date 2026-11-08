@@ -45,7 +45,6 @@ import io.trino.metadata.GlobalFunctionCatalog;
 import io.trino.metadata.LanguageFunctionProvider;
 import io.trino.metadata.Metadata;
 import io.trino.metadata.SessionPropertyManager;
-import io.trino.node.InternalNodeManager;
 import io.trino.node.TestingInternalNodeManager;
 import io.trino.operator.OperatorStats;
 import io.trino.plugin.base.security.AllowAllSystemAccessControl;
@@ -97,6 +96,24 @@ public class TestLocalDispatchQuery
         countDownLatch = new CountDownLatch(1);
         Executor executor = newCachedThreadPool(daemonThreadsNamed(getClass().getSimpleName() + "-%s"));
         Metadata metadata = createTestingMetadataManager();
+        QueryStateMachine queryStateMachine = createQueryStateMachine(metadata, executor);
+        LocalDispatchQuery localDispatchQuery = createLocalDispatchQuery(
+                queryStateMachine,
+                metadata,
+                new TestClusterSizeMonitor(immediateVoidFuture()),
+                executor);
+        queryStateMachine.addStateChangeListener(state -> {
+            if (state.ordinal() >= QueryState.PLANNING.ordinal()) {
+                countDownLatch.countDown();
+            }
+        });
+        localDispatchQuery.startWaitingForResources();
+        countDownLatch.await();
+        assertThat(localDispatchQuery.getDispatchInfo().getCoordinatorLocation()).isPresent();
+    }
+
+    private static QueryStateMachine createQueryStateMachine(Metadata metadata, Executor executor)
+    {
         TransactionManager transactionManager = createTestTransactionManager();
         AccessControlManager accessControl = new AccessControlManager(
                 NodeVersion.UNKNOWN,
@@ -107,7 +124,7 @@ public class TestLocalDispatchQuery
                 new SecretsResolver(ImmutableMap.of()),
                 DefaultSystemAccessControl.NAME);
         accessControl.setSystemAccessControls(List.of(AllowAllSystemAccessControl.INSTANCE));
-        QueryStateMachine queryStateMachine = QueryStateMachine.begin(
+        return QueryStateMachine.begin(
                 Optional.empty(),
                 "sql",
                 Optional.empty(),
@@ -126,6 +143,14 @@ public class TestLocalDispatchQuery
                 true,
                 Optional.empty(),
                 new NodeVersion("test"));
+    }
+
+    private static LocalDispatchQuery createLocalDispatchQuery(
+            QueryStateMachine queryStateMachine,
+            Metadata metadata,
+            ClusterSizeMonitor clusterSizeMonitor,
+            Executor executor)
+    {
         QueryMonitor queryMonitor = new QueryMonitor(
                 jsonCodec(StagesInfo.class),
                 jsonCodec(OperatorStats.class),
@@ -154,21 +179,13 @@ public class TestLocalDispatchQuery
                 Slug.createNew(),
                 WarningCollector.NOOP,
                 null);
-        LocalDispatchQuery localDispatchQuery = new LocalDispatchQuery(
+        return new LocalDispatchQuery(
                 queryStateMachine,
                 Futures.immediateFuture(dataDefinitionExecution),
                 queryMonitor,
-                new TestClusterSizeMonitor(TestingInternalNodeManager.createDefault(), new NodeSchedulerConfig()),
+                clusterSizeMonitor,
                 executor,
                 _ -> dataDefinitionExecution.start());
-        queryStateMachine.addStateChangeListener(state -> {
-            if (state.ordinal() >= QueryState.PLANNING.ordinal()) {
-                countDownLatch.countDown();
-            }
-        });
-        localDispatchQuery.startWaitingForResources();
-        countDownLatch.await();
-        assertThat(localDispatchQuery.getDispatchInfo().getCoordinatorLocation()).isPresent();
     }
 
     private static class NoConnectorServicesProvider
@@ -230,15 +247,18 @@ public class TestLocalDispatchQuery
     private static class TestClusterSizeMonitor
             extends ClusterSizeMonitor
     {
-        public TestClusterSizeMonitor(InternalNodeManager nodeManager, NodeSchedulerConfig nodeSchedulerConfig)
+        private final ListenableFuture<Void> minimumWorkersFuture;
+
+        public TestClusterSizeMonitor(ListenableFuture<Void> minimumWorkersFuture)
         {
-            super(nodeManager, nodeSchedulerConfig);
+            super(TestingInternalNodeManager.createDefault(), new NodeSchedulerConfig());
+            this.minimumWorkersFuture = minimumWorkersFuture;
         }
 
         @Override
         public synchronized ListenableFuture<Void> waitForMinimumWorkers(int executionMinCount, Duration executionMaxWait)
         {
-            return immediateVoidFuture();
+            return minimumWorkersFuture;
         }
     }
 }
