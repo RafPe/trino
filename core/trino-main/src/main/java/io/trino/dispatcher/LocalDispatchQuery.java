@@ -132,7 +132,8 @@ public class LocalDispatchQuery
             }
             ListenableFuture<Void> minimumWorkerFuture = clusterSizeMonitor.waitForMinimumWorkers(executionMinCount, getRequiredWorkersMaxWait(session));
             // when worker requirement is met, start the execution
-            addSuccessCallback(minimumWorkerFuture, () -> startExecution(queryExecution), queryExecutor);
+            int requiredWorkers = executionMinCount;
+            addSuccessCallback(minimumWorkerFuture, () -> startExecution(queryExecution, requiredWorkers), queryExecutor);
             addExceptionCallback(minimumWorkerFuture, stateMachine::transitionToFailed, queryExecutor);
 
             // cancel minimumWorkerFuture if query fails for some reason or is cancelled by user
@@ -144,9 +145,10 @@ public class LocalDispatchQuery
         });
     }
 
-    private void startExecution(QueryExecution queryExecution)
+    private void startExecution(QueryExecution queryExecution, int requiredWorkers)
     {
         if (stateMachine.transitionToDispatching()) {
+            trackRunningQuery(requiredWorkers);
             try {
                 querySubmitter.accept(queryExecution);
                 if (notificationSentOrGuaranteed.compareAndSet(false, true)) {
@@ -163,6 +165,18 @@ public class LocalDispatchQuery
                 submitted.set(null);
             }
         }
+    }
+
+    private void trackRunningQuery(int requiredWorkers)
+    {
+        QueryId queryId = stateMachine.getQueryId();
+        clusterSizeMonitor.addRunningQuery(queryId, requiredWorkers);
+        // the listener is notified of the current state when added, so the query is removed even if it is already done
+        stateMachine.addStateChangeListener(state -> {
+            if (state.isDone()) {
+                clusterSizeMonitor.removeRunningQuery(queryId);
+            }
+        });
     }
 
     @Override

@@ -53,6 +53,7 @@ import io.trino.security.AccessControlConfig;
 import io.trino.security.AccessControlManager;
 import io.trino.server.protocol.Slug;
 import io.trino.spi.NodeVersion;
+import io.trino.spi.TrinoException;
 import io.trino.spi.catalog.CatalogProperties;
 import io.trino.spi.resourcegroups.QueryType;
 import io.trino.spi.resourcegroups.ResourceGroupId;
@@ -71,6 +72,7 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 
+import static com.google.common.util.concurrent.Futures.immediateFailedFuture;
 import static com.google.common.util.concurrent.Futures.immediateVoidFuture;
 import static io.airlift.concurrent.Threads.daemonThreadsNamed;
 import static io.airlift.json.JsonCodec.jsonCodec;
@@ -79,8 +81,10 @@ import static io.opentelemetry.api.OpenTelemetry.noop;
 import static io.trino.SessionTestUtils.TEST_SESSION;
 import static io.trino.execution.querystats.PlanOptimizersStatsCollector.createPlanOptimizersStatsCollector;
 import static io.trino.metadata.TestingMetadataManager.createTestingMetadataManager;
+import static io.trino.spi.StandardErrorCode.GENERIC_INSUFFICIENT_RESOURCES;
 import static io.trino.sql.tree.SaveMode.FAIL;
 import static io.trino.testing.TestingEventListenerManager.emptyEventListenerManager;
+import static io.trino.testing.assertions.Assert.assertEventually;
 import static io.trino.transaction.InMemoryTransactionManager.createTestTransactionManager;
 import static java.util.concurrent.Executors.newCachedThreadPool;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -110,6 +114,54 @@ public class TestLocalDispatchQuery
         localDispatchQuery.startWaitingForResources();
         countDownLatch.await();
         assertThat(localDispatchQuery.getDispatchInfo().getCoordinatorLocation()).isPresent();
+    }
+
+    @Test
+    public void testRequiredWorkersForRunningQueries()
+            throws InterruptedException
+    {
+        Executor executor = newCachedThreadPool(daemonThreadsNamed(getClass().getSimpleName() + "-%s"));
+        Metadata metadata = createTestingMetadataManager();
+        QueryStateMachine queryStateMachine = createQueryStateMachine(metadata, executor);
+        ClusterSizeMonitor clusterSizeMonitor = new TestClusterSizeMonitor(immediateVoidFuture());
+        LocalDispatchQuery localDispatchQuery = createLocalDispatchQuery(queryStateMachine, metadata, clusterSizeMonitor, executor);
+        CountDownLatch dispatched = new CountDownLatch(1);
+        queryStateMachine.addStateChangeListener(state -> {
+            if (state.ordinal() >= QueryState.PLANNING.ordinal()) {
+                dispatched.countDown();
+            }
+        });
+        assertThat(clusterSizeMonitor.getRequiredWorkersForRunningQueries()).isEqualTo(0);
+
+        localDispatchQuery.startWaitingForResources();
+        dispatched.await();
+        // data definition queries do not wait for the required workers, only for a single node
+        assertThat(clusterSizeMonitor.getRequiredWorkersForRunningQueries()).isEqualTo(1);
+
+        localDispatchQuery.cancel();
+        assertEventually(() -> assertThat(clusterSizeMonitor.getRequiredWorkersForRunningQueries()).isEqualTo(0));
+    }
+
+    @Test
+    public void testRequiredWorkersForRunningQueriesWhenWaitFails()
+            throws InterruptedException
+    {
+        Executor executor = newCachedThreadPool(daemonThreadsNamed(getClass().getSimpleName() + "-%s"));
+        Metadata metadata = createTestingMetadataManager();
+        QueryStateMachine queryStateMachine = createQueryStateMachine(metadata, executor);
+        ClusterSizeMonitor clusterSizeMonitor = new TestClusterSizeMonitor(immediateFailedFuture(new TrinoException(GENERIC_INSUFFICIENT_RESOURCES, "Insufficient active worker nodes")));
+        LocalDispatchQuery localDispatchQuery = createLocalDispatchQuery(queryStateMachine, metadata, clusterSizeMonitor, executor);
+        CountDownLatch done = new CountDownLatch(1);
+        queryStateMachine.addStateChangeListener(state -> {
+            if (state.isDone()) {
+                done.countDown();
+            }
+        });
+
+        localDispatchQuery.startWaitingForResources();
+        done.await();
+        assertThat(queryStateMachine.getQueryState()).isEqualTo(QueryState.FAILED);
+        assertThat(clusterSizeMonitor.getRequiredWorkersForRunningQueries()).isEqualTo(0);
     }
 
     private static QueryStateMachine createQueryStateMachine(Metadata metadata, Executor executor)

@@ -17,8 +17,10 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
+import com.google.inject.Key;
 import io.trino.Session;
 import io.trino.dispatcher.DispatchManager;
+import io.trino.execution.ClusterSizeMonitor;
 import io.trino.execution.QueryInfo;
 import io.trino.execution.QueryManager;
 import io.trino.testing.DistributedQueryRunner;
@@ -33,6 +35,7 @@ import org.junit.jupiter.api.parallel.Execution;
 import static io.trino.SystemSessionProperties.REQUIRED_WORKERS_COUNT;
 import static io.trino.SystemSessionProperties.REQUIRED_WORKERS_MAX_WAIT_TIME;
 import static io.trino.testing.TestingSession.testSessionBuilder;
+import static io.trino.testing.assertions.Assert.assertEventually;
 import static java.util.concurrent.Executors.newFixedThreadPool;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
@@ -200,6 +203,9 @@ public class TestMinWorkerRequirement
             // With no queries submitted, the gauges report the empty-set defaults.
             assertThat(dispatchManager.getWaitingForResourcesQueries()).isEqualTo(0);
             assertThat(dispatchManager.getWaitingForResourcesMaxAgeInSeconds()).isEqualTo(0.0);
+            ClusterSizeMonitor clusterSizeMonitor = queryRunner.getCoordinator().getInstance(Key.get(ClusterSizeMonitor.class));
+            assertThat(clusterSizeMonitor.getRequiredWorkers()).isEqualTo(0);
+            assertThat(clusterSizeMonitor.getRequiredWorkersForRunningQueries()).isEqualTo(0);
 
             Session session1 = Session.builder(queryRunner.getDefaultSession())
                     .setSystemProperty(REQUIRED_WORKERS_COUNT, "2")
@@ -226,6 +232,8 @@ public class TestMinWorkerRequirement
             // JMX gauges should reflect the in-state set.
             assertThat(dispatchManager.getWaitingForResourcesQueries()).isEqualTo(3);
             assertThat(dispatchManager.getWaitingForResourcesMaxAgeInSeconds()).isGreaterThan(0.0);
+            assertThat(clusterSizeMonitor.getRequiredWorkers()).isEqualTo(4);
+            assertThat(clusterSizeMonitor.getRequiredWorkersForRunningQueries()).isEqualTo(0);
 
             queryRunner.addServers(1);
             assertThat(queryRunner.getCoordinator().getWorkerCount()).isEqualTo(1);
@@ -249,6 +257,10 @@ public class TestMinWorkerRequirement
             assertThat(queryFuture3.get().result().getRowCount() > 0).isTrue();
             completedQueryInfo = queryManager.getFullQueryInfo(queryFuture3.get().queryId());
             assertThat(completedQueryInfo.getQueryStats().getResourceWaitingTime().roundTo(SECONDS) >= 2).isTrue();
+
+            // Completed queries are no longer tracked as running
+            assertThat(clusterSizeMonitor.getRequiredWorkers()).isEqualTo(0);
+            assertEventually(() -> assertThat(clusterSizeMonitor.getRequiredWorkersForRunningQueries()).isEqualTo(0));
         }
         finally {
             service.shutdown();

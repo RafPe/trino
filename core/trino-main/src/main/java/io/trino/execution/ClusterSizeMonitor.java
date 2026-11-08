@@ -23,12 +23,15 @@ import io.airlift.units.Duration;
 import io.trino.execution.scheduler.NodeSchedulerConfig;
 import io.trino.node.AllNodes;
 import io.trino.node.InternalNodeManager;
+import io.trino.spi.QueryId;
 import io.trino.spi.TrinoException;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.weakref.jmx.Managed;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.PriorityQueue;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -58,6 +61,9 @@ public class ClusterSizeMonitor
 
     @GuardedBy("this")
     private final PriorityQueue<MinNodesFuture> futuresQueue = new PriorityQueue<>(comparing(MinNodesFuture::executionMinCount));
+
+    @GuardedBy("this")
+    private final Map<QueryId, Integer> runningQueriesRequiredWorkers = new HashMap<>();
 
     @Inject
     public ClusterSizeMonitor(InternalNodeManager nodeManager, NodeSchedulerConfig nodeSchedulerConfig)
@@ -128,6 +134,24 @@ public class ClusterSizeMonitor
         return future;
     }
 
+    /**
+     * Records that a query, which required at least {@code requiredWorkers} workers, has finished waiting
+     * for workers and was admitted for execution. The caller must call {@link #removeRunningQuery(QueryId)}
+     * once the query is done.
+     */
+    public synchronized void addRunningQuery(QueryId queryId, int requiredWorkers)
+    {
+        requireNonNull(queryId, "queryId is null");
+        checkArgument(requiredWorkers > 0, "requiredWorkers should be greater than 0");
+        runningQueriesRequiredWorkers.put(queryId, requiredWorkers);
+    }
+
+    public synchronized void removeRunningQuery(QueryId queryId)
+    {
+        requireNonNull(queryId, "queryId is null");
+        runningQueriesRequiredWorkers.remove(queryId);
+    }
+
     private synchronized void removeFuture(MinNodesFuture minNodesFuture)
     {
         futuresQueue.remove(minNodesFuture);
@@ -161,6 +185,19 @@ public class ClusterSizeMonitor
     {
         return futuresQueue.stream()
                 .map(MinNodesFuture::executionMinCount)
+                .max(Integer::compareTo)
+                .orElse(0);
+    }
+
+    /**
+     * Returns the largest number of workers required by a query that has finished waiting for workers and is not done yet.
+     * Unlike {@link #getRequiredWorkers()}, which only covers queries that are still waiting, this does not drop
+     * when the waiting queries start running.
+     */
+    @Managed
+    public synchronized int getRequiredWorkersForRunningQueries()
+    {
+        return runningQueriesRequiredWorkers.values().stream()
                 .max(Integer::compareTo)
                 .orElse(0);
     }
