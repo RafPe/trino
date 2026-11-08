@@ -30,6 +30,10 @@ All `file:line` references point at that commit.
 - **Key insight:** an estimator that reads per-node *statistics* instead of root *costs* covers GROUP BY, ORDER BY, TopN and joins without changing the cost-based optimizer. Window functions, COUNT(DISTINCT) (MarkDistinct), UNNEST and ROLLUP/CUBE (GroupId) need new statistics rules either way.
 - **Upstream overlap:** open PR [trinodb/trino#31287](https://github.com/trinodb/trino/pull/31287) (wendigo) touches the same cost and statistics classes.
 
+## Corrections
+
+- New statistics rules are **not** plan-neutral: about 20 optimizer rules read statistics directly. See the note at the top of `05-tier-c-assessment.md`. The WS2 estimator itself (read-only) is still plan-neutral.
+
 ## Status and decisions pending (as of 2026-11-08)
 
 - [ ] Launch WS1–WS3 implementation, with the WS2 estimator based on statistics.

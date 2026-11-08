@@ -2,6 +2,12 @@
 
 Research only. No source changes. Paths are relative to `core/trino-main/src/main/java/io/trino/` unless stated.
 
+> **Correction (2026-11-08, verified after this assessment):** the plan-selection analysis below covers
+> *costs* only. About 20 optimizer rules read *statistics* directly, for example `DetermineJoinDistributionType`
+> (build-side stats), `DeterminePartitionCount`, `AddExchanges`, `MultipleDistinctAggregationToMarkDistinct`
+> and `PushPartialAggregationThroughJoin`. New **stats rules** can therefore change plans even with the
+> calculator split. Each stats-rule PR must check the cost-based plan golden files and report the diffs.
+
 ## TL;DR
 
 - **Two causes of NaN.** Cost visitors are missing, and about half the affected nodes also have **no stats rule**. Window, MarkDistinct, GroupId, Unnest, Offset, TableWriter and grouping-set aggregation have no stats, so a cost visitor alone would still produce NaN. Stats rules are roughly half of the work.
