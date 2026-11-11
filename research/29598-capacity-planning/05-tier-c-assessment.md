@@ -8,6 +8,13 @@ Research only. No source changes. Paths are relative to `core/trino-main/src/mai
 > and `PushPartialAggregationThroughJoin`. New **stats rules** can therefore change plans even with the
 > calculator split. Each stats-rule PR must check the cost-based plan golden files and report the diffs.
 
+> **Correction (2026-11-11, verified):** only `ReorderJoins` uses the cost calculator to make
+> plan decisions. `DetermineJoinDistributionType` and `DetermineSemiJoinDistributionType` compute their
+> own local join cost from *statistics* (`calculateJoinCostWithoutOutput`), so new cost visitors don't
+> affect them, but new stats rules do. `CostCalculatorWithEstimatedExchanges` delegates to
+> `CostCalculatorUsingExchanges`, so the proposed split needs an explicit mode or a separate instance.
+> EXPLAIN prints each node's *local* cost. The "10–25 golden files" figure in §2/§3 was never measured.
+
 ## TL;DR
 
 - **Two causes of NaN.** Cost visitors are missing, and about half the affected nodes also have **no stats rule**. Window, MarkDistinct, GroupId, Unnest, Offset, TableWriter and grouping-set aggregation have no stats, so a cost visitor alone would still produce NaN. Stats rules are roughly half of the work.

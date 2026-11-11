@@ -37,6 +37,8 @@ All `file:line` references point at that commit.
 
 - `SqlQueryExecution.start()` runs on the cached `dispatcher-query-%s` pool, not the `query-execution` pool (found by the Codex review on 2026-11-11).
 
+- Only `ReorderJoins` consumes the cost calculator for plan selection; the join distribution rules use statistics. See the note in `05-tier-c-assessment.md` (2026-11-11).
+
 ## Status and decisions pending (as of 2026-11-08)
 
 - [ ] Launch WS1–WS3 implementation, with the WS2 estimator based on statistics.
