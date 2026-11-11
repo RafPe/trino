@@ -2,6 +2,8 @@
 
 Opus research agent, 2026-11-08. Paths are relative to `core/trino-main/src/main/java/io/trino/`.
 
+> **Correction (2026-11-11):** `start()` runs on the cached `dispatcher-query-%s` pool (`DispatchExecutor.java:52`, `LocalDispatchQueryFactory.java:108`), not on the `query-execution` pool described in §1. See `05-codex-structural-review.md`.
+
 ## 1. Dispatch flow, threads, and how the existing wait works
 - `InternalResourceGroup.startInBackground` (`execution/resourcegroups/InternalResourceGroup.java:743-760`) adds the query to `runningQueries` first, then calls `executor.execute(query::startWaitingForResources)`. So a query already holds a running slot while it is in WAITING_FOR_RESOURCES today.
 - `LocalDispatchQuery.startWaitingForResources/waitForMinimumWorkers` (`dispatcher/LocalDispatchQuery.java:117-142`) is the existing required-workers wait. It does not block a thread. It chains on `queryExecutionFuture` (the `SqlQueryExecution` constructor, which runs analysis at `SqlQueryExecution.java:221`) and on `ClusterSizeMonitor.waitForMinimumWorkers`, which returns a ListenableFuture.

@@ -24,7 +24,7 @@ estimates. Ask the author for the per-query plan-cost accuracy data they offered
 ## Design problems
 
 1. **The wait has to be asynchronous.**
-   - `start()` runs on a `query-execution` pool thread (`CoordinatorModule.java:472-483`).
+   - `start()` runs on a thread from the cached, unbounded `dispatcher-query-%s` pool (`DispatchExecutor.java:52`, via `LocalDispatchQuery.startExecution` → `QueryManager.createQuery`), renamed `Query-<id>`. Blocking it would create one thread per waiting query. *(Corrected 2026-11-11, after the Codex review; this originally said the `query-execution` pool.)*
    - `start()` needs to split into "plan, then compute N" and a future-chained "distribute, then schedule", following the pattern in `LocalDispatchQuery`.
 2. **Time limits.**
    - A wait inside `PLANNING` counts against `query.max-planning-time` (`QueryTracker.java:189-199`) and `query.max-execution-time`.

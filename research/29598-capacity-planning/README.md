@@ -17,6 +17,7 @@ All `file:line` references point at that commit.
 | [03-implementation-plan.md](03-implementation-plan.md) | Phased plan, parallel workstreams, local environment, and child workspaces |
 | [04-without-tier-c.md](04-without-tier-c.md) | What we get without Tier C: a statistics-based estimator versus root cost |
 | [05-tier-c-assessment.md](05-tier-c-assessment.md) | Tier C (cost-based optimizer visitors) assessment by an Opus coordinator with Sonnet researchers |
+| [reports/05-codex-structural-review.md](reports/05-codex-structural-review.md) | Independent Codex review (verdict: structurally flawed as proposed) and a comparison with our findings |
 | [reports/](reports/) | Raw reports from the four Opus research agents (lifecycle, cost estimate, ClusterSizeMonitor/scheduling, config/tests/docs) |
 
 ## Summary
@@ -33,6 +34,8 @@ All `file:line` references point at that commit.
 ## Corrections
 
 - New statistics rules are **not** plan-neutral: about 20 optimizer rules read statistics directly. See the note at the top of `05-tier-c-assessment.md`. The WS2 estimator itself (read-only) is still plan-neutral.
+
+- `SqlQueryExecution.start()` runs on the cached `dispatcher-query-%s` pool, not the `query-execution` pool (found by the Codex review on 2026-11-11).
 
 ## Status and decisions pending (as of 2026-11-08)
 
