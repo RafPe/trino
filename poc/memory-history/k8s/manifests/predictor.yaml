@@ -1,0 +1,56 @@
+# Real predictor (PLAN.md Contract 3). up.sh replaces ${PREDICTOR_IMAGE} and applies this
+# when PREDICTOR_IMAGE is set. Not exercised yet: the image does not exist at the time of writing.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: predictor
+  labels:
+    app.kubernetes.io/name: predictor
+    app.kubernetes.io/component: service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: predictor
+      app.kubernetes.io/component: service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: predictor
+        app.kubernetes.io/component: service
+    spec:
+      containers:
+        - name: predictor
+          image: ${PREDICTOR_IMAGE}
+          imagePullPolicy: Never
+          env:
+            - name: DB_URL
+              value: jdbc:postgresql://postgres:5432/memory_history
+            - name: DB_USER
+              value: trino
+            - name: DB_PASSWORD
+              value: trino
+            # query.max-memory-per-node = 1GB (values-trino.yaml)
+            - name: PER_WORKER_MEMORY_BYTES
+              value: "1073741824"
+            # Keep equal to server.keda.minReplicaCount / maxReplicaCount.
+            - name: MIN_WORKERS
+              value: "2"
+            - name: MAX_WORKERS
+              value: "6"
+            - name: PORT
+              value: "8090"
+          ports:
+            - name: http
+              containerPort: 8090
+          readinessProbe:
+            httpGet:
+              path: /v1/health
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi

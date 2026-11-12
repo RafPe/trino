@@ -1,0 +1,95 @@
+# Values for the official Trino chart (https://trinodb.github.io/charts, chart `trino`, version 1.45.0 = Trino 484).
+# Cluster shape follows PLAN.md Contract 5. up.sh overrides image.repository / image.tag
+# from TRINO_IMAGE_REPO / TRINO_IMAGE_TAG.
+
+image:
+  repository: trino-memory-history
+  tag: poc
+  # Images are loaded into kind with `kind load docker-image`; never pull from a registry.
+  pullPolicy: Never
+
+server:
+  workers: 2
+  config:
+    query:
+      maxMemory: "6GB"
+  keda:
+    enabled: true
+    pollingInterval: 5
+    cooldownPeriod: 300
+    minReplicaCount: 2
+    maxReplicaCount: 6
+    # HPA desired replicas = ceil(metric / targetValue) for an External metric with
+    # an AverageValue target, so targetValue "1" makes replicas == `workers`.
+    triggers:
+      - type: metrics-api
+        metricType: AverageValue
+        metadata:
+          url: "http://predictor.{{ .Release.Namespace }}.svc:8090/v1/required-workers"
+          format: json
+          valueLocation: workers
+          targetValue: "1"
+    advanced:
+      horizontalPodAutoscalerConfig:
+        behavior:
+          scaleUp:
+            stabilizationWindowSeconds: 0
+            selectPolicy: Max
+            policies:
+              - type: Pods
+                value: 10
+                periodSeconds: 15
+          scaleDown:
+            stabilizationWindowSeconds: 120
+            selectPolicy: Max
+            policies:
+              - type: Percent
+                value: 100
+                periodSeconds: 15
+
+catalogs:
+  tpch: |
+    connector.name=tpch
+    tpch.splits-per-node=4
+  tpcds: |
+    connector.name=tpcds
+    tpcds.splits-per-node=4
+
+coordinator:
+  jvm:
+    maxHeapSize: "4G"
+    minHeapSize: "4G"
+  config:
+    nodeScheduler:
+      includeCoordinator: false
+    query:
+      maxMemoryPerNode: "1GB"
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "5Gi"
+    limits:
+      memory: "6Gi"
+
+worker:
+  jvm:
+    maxHeapSize: "4G"
+    minHeapSize: "4G"
+  config:
+    query:
+      maxMemoryPerNode: "1GB"
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "5Gi"
+    limits:
+      memory: "6Gi"
+  # Trino graceful shutdown: the worker stops taking new tasks, waits
+  # gracePeriodSeconds, drains running tasks, waits gracePeriodSeconds again.
+  # The chart requires terminationGracePeriodSeconds >= 2 x gracePeriodSeconds;
+  # the extra room lets long-running tasks drain before SIGKILL.
+  gracefulShutdown:
+    enabled: true
+    gracePeriodSeconds: 30
+    user: admin
+  terminationGracePeriodSeconds: 300
