@@ -6,7 +6,7 @@ fingerprint. It exists so that gate.py and scaler.py can be tested before the
 real predictor image exists.
 
 Canned answers:
-  --known-workers N   every SQL that contains --match (default: any SQL) is
+  --known-workers N   every SQL that contains a --match text (default: any SQL) is
                       "known" and needs N workers; other SQL is "unknown".
 Reservations are kept in memory with a TTL, and /v1/required-workers applies
 the Contract 3 formula with --per-worker-bytes, --min-workers, --max-workers,
@@ -41,7 +41,7 @@ def predict(body):
     if not sql.strip():
         return {"supported": False, "known": False}
     fingerprint = hashlib.sha256(sql.encode()).hexdigest()
-    if ARGS.known_workers is None or (ARGS.match and ARGS.match not in sql):
+    if ARGS.known_workers is None or (ARGS.match and not any(m in sql for m in ARGS.match)):
         return {"supported": True, "fingerprint": fingerprint, "known": False, "runs": 0, "successfulRuns": 0, "memoryFailures": 0,
                 "predictedPeakUserMemoryBytes": None, "predictedPeakTaskUserMemoryBytes": None, "requiredWorkers": None, "basis": None}
     # Pick a predicted peak that maps to exactly --known-workers.
@@ -105,7 +105,7 @@ def main():
     p = argparse.ArgumentParser(description="TEST ONLY mock predictor")
     p.add_argument("--port", type=int, default=18090)
     p.add_argument("--known-workers", type=int, default=None)
-    p.add_argument("--match", default=None, help="only SQL containing this text is known")
+    p.add_argument("--match", action="append", default=[], help="only SQL containing this text is known (repeatable)")
     p.add_argument("--per-worker-bytes", type=int, default=1073741824)
     p.add_argument("--min-workers", type=int, default=2)
     p.add_argument("--max-workers", type=int, default=6)

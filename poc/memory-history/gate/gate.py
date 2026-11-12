@@ -78,14 +78,22 @@ def _connect(server, user, catalog, schema, session_properties=None, client_tags
     )
 
 
-def active_workers(server, user="poc"):
-    conn = _connect(server, user, "system", "runtime")
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT count(*) FROM system.runtime.nodes WHERE coordinator = false AND state = 'active'")
-        return int(cur.fetchall()[0][0])
-    finally:
-        conn.close()
+def active_workers(server, user="poc", attempts=5):
+    # Right after workers are removed, the coordinator still lists them for a while and
+    # this query can fail (e.g. PAGE_TRANSPORT_TIMEOUT), so retry.
+    for attempt in range(attempts):
+        conn = _connect(server, user, "system", "runtime")
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT count(*) FROM system.runtime.nodes WHERE coordinator = false AND state = 'active'")
+            return int(cur.fetchall()[0][0])
+        except trino.exceptions.TrinoQueryError as e:
+            if attempt == attempts - 1:
+                raise
+            print(f"warning: counting workers failed ({e.error_name}), retrying", file=sys.stderr)
+            time.sleep(5)
+        finally:
+            conn.close()
 
 
 def query_info(server, query_id, user="poc"):
