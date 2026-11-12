@@ -1,0 +1,5 @@
+.venv/
+results/*
+!results/.gitkeep
+!results/REPORT.md
+__pycache__/
