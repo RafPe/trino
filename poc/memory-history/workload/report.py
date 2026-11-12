@@ -159,6 +159,28 @@ def build_report(runs, history, source):
         out(f"- min: {min(ratios):.2f}, max: {max(ratios):.2f}")
         out(f"- worst: {worst:.2f} ({worst_r.get('template')} {worst_r.get('schema')} v{worst_r.get('variant')}, "
             f"predicted {fmt_bytes(worst_r['_predicted'])}, actual {fmt_bytes(worst_r['_peak'])})")
+        out("")
+        out("The same ratio by group. Queries under 100 MB are noisy (a few kB to a few MB) and do not matter for scaling.")
+        out("")
+        out("| group | n | under-predicted | median | p90 | min | max |")
+        out("|---|---|---|---|---|---|---|")
+        big = 100 * 1024 * 1024
+
+        def basis(r):
+            return (r.get("prediction") or {}).get("basis")
+
+        groups_by_name = [
+            ("actual peak ≥ 100 MB, predicted from successful runs",
+             [x for r, x in pairs if r["_peak"] >= big and basis(r) == "max_of_last_successful_runs"]),
+            ("actual peak ≥ 100 MB, predicted from a memory failure (peak × growth factor)",
+             [x for r, x in pairs if r["_peak"] >= big and basis(r) == "memory_failure_growth"]),
+            ("actual peak < 100 MB",
+             [x for r, x in pairs if r["_peak"] < big]),
+        ]
+        for name, values in groups_by_name:
+            if values:
+                out(f"| {name} | {len(values)} | {sum(v < 1 for v in values)} | {statistics.median(values):.2f} | "
+                    f"{percentile(values, 0.9):.2f} | {min(values):.2f} | {max(values):.2f} |")
     else:
         out("No hits with an actual peak yet.")
     out("")

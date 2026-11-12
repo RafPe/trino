@@ -162,7 +162,7 @@ Implementation: JDK `com.sun.net.httpserver.HttpServer`, plain JDBC, Jackson for
 `gate.py --server http://localhost:8080 --predictor http://localhost:8090 --catalog tpcds --schema sf10 [--user poc] [--no-gate] [--tag k=v ...] (-f query.sql | -e "sql")`
 
 1. `--no-gate`: submit as is.
-2. Otherwise call `/v1/predict`. If `known` and `requiredWorkers` > current active workers (`SELECT count(*) FROM system.runtime.nodes WHERE coordinator = false AND state = 'active'`): create a reservation and submit with session properties `required_workers_count=<N>` and `required_workers_max_wait_time='10m'`.
+2. Otherwise call `/v1/predict`. If `known`: create a reservation and submit with session properties `required_workers_count=<N>` and `required_workers_max_wait_time='10m'`. (Changed during integration: the reservation is made even when the cluster already has enough workers, so the scaler does not remove workers under a running query.)
 3. Always delete the reservation when the query ends (success or failure).
 4. Print one JSON line: query id, state, error code, prediction, workers before/after, wait time.
 

@@ -171,7 +171,9 @@ def run_query(
             prediction = {"error": f"predictor unavailable: {e}"}
         result["prediction"] = prediction
         required = prediction.get("requiredWorkers")
-        if prediction.get("known") and required is not None and required > result["workers_before"]:
+        # Reserve for every known query, also when the cluster is already large enough:
+        # the reservation is what stops the scaler from removing workers under a running query.
+        if prediction.get("known") and required is not None:
             reservation_id = str(uuid.uuid4())
             try:
                 r = requests.post(

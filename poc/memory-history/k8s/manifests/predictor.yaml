@@ -38,6 +38,8 @@ spec:
               value: "2"
             - name: MAX_WORKERS
               value: "6"
+            - name: SAFETY_FACTOR
+              value: "1.5"
             - name: PORT
               value: "8090"
           ports:
