@@ -40,8 +40,11 @@ public class HistoryRepository
             LIMIT ?
             """;
 
-    // PostgreSQL JDBC timeouts in seconds; parameters in the JDBC URL take precedence
-    private static final String TIMEOUT_SECONDS = "10";
+    // PostgreSQL JDBC timeouts in seconds; parameters in the JDBC URL take precedence.
+    // The gate waits for /v1/predict before it submits a query, so a database that cannot be
+    // reached must fail fast; a slow query may take longer.
+    private static final String CONNECT_TIMEOUT_SECONDS = "3";
+    private static final String SOCKET_TIMEOUT_SECONDS = "10";
     private static final int QUERY_TIMEOUT_SECONDS = 10;
 
     private final String url;
@@ -50,9 +53,9 @@ public class HistoryRepository
     public HistoryRepository(PredictorConfig config)
     {
         this.url = requireNonNull(config.dbUrl(), "dbUrl is null");
-        properties.setProperty("connectTimeout", TIMEOUT_SECONDS);
-        properties.setProperty("socketTimeout", TIMEOUT_SECONDS);
-        properties.setProperty("loginTimeout", TIMEOUT_SECONDS);
+        properties.setProperty("connectTimeout", CONNECT_TIMEOUT_SECONDS);
+        properties.setProperty("loginTimeout", CONNECT_TIMEOUT_SECONDS);
+        properties.setProperty("socketTimeout", SOCKET_TIMEOUT_SECONDS);
         config.dbUser().ifPresent(user -> properties.setProperty("user", user));
         config.dbPassword().ifPresent(password -> properties.setProperty("password", password));
     }
