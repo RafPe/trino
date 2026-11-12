@@ -1,0 +1,131 @@
+# Memory-history PoC workload (Contract 6).
+# Each template runs once per schema per variant. `{{name}}` placeholders in the
+# SQL file are replaced with the variant's values. Table names in the SQL are
+# unqualified: the catalog/schema below is the session catalog/schema.
+session_properties:
+  join_distribution_type: PARTITIONED
+  task_concurrency: 4
+
+templates:
+  # ---- small (MBs) ----
+  - name: tpcds_q03
+    file: queries/tpcds_q03.sql
+    size: small
+    catalog: tpcds
+    schemas: [sf1]
+    variants:
+      - {manufact_id: 128, moy: 11}
+      - {manufact_id: 436, moy: 12}
+      - {manufact_id: 269, moy: 11}
+  - name: tpcds_q42
+    file: queries/tpcds_q42.sql
+    size: small
+    catalog: tpcds
+    schemas: [sf1]
+    variants:
+      - {moy: 11, year: 2000}
+      - {moy: 12, year: 1999}
+      - {moy: 11, year: 2001}
+  - name: tpcds_q55
+    file: queries/tpcds_q55.sql
+    size: small
+    catalog: tpcds
+    schemas: [sf1]
+    variants:
+      - {manager_id: 28, moy: 11, year: 1999}
+      - {manager_id: 13, moy: 11, year: 2000}
+      - {manager_id: 36, moy: 12, year: 2001}
+  - name: tpcds_q96
+    file: queries/tpcds_q96.sql
+    size: small
+    catalog: tpcds
+    schemas: [sf1]
+    variants:
+      - {hour: 20, dep_count: 7}
+      - {hour: 8, dep_count: 5}
+      - {hour: 15, dep_count: 3}
+  - name: tpch_q06
+    file: queries/tpch_q06.sql
+    size: small
+    catalog: tpch
+    schemas: [sf1]
+    variants:
+      - {year: 1994, discount: 0.06}
+      - {year: 1995, discount: 0.05}
+      - {year: 1996, discount: 0.07}
+  - name: tpch_q01
+    file: queries/tpch_q01.sql
+    size: small
+    catalog: tpch
+    schemas: [sf1]
+    variants:
+      - {delta_days: 90}
+      - {delta_days: 60}
+      - {delta_days: 120}
+
+  # ---- medium (100s of MB) ----
+  - name: tpcds_q07
+    file: queries/tpcds_q07.sql
+    size: medium
+    catalog: tpcds
+    schemas: [sf10]
+    variants:
+      - {gender: M, year: 2000}
+      - {gender: F, year: 1999}
+      - {gender: M, year: 2001}
+  - name: tpcds_q19
+    file: queries/tpcds_q19.sql
+    size: medium
+    catalog: tpcds
+    schemas: [sf10]
+    variants:
+      - {manager_id: 8, moy: 11, year: 1998}
+      - {manager_id: 7, moy: 12, year: 1999}
+      - {manager_id: 14, moy: 11, year: 2000}
+  - name: tpcds_q43
+    file: queries/tpcds_q43.sql
+    size: medium
+    catalog: tpcds
+    schemas: [sf10]
+    variants:
+      - {gmt_offset: -5, year: 2000}
+      - {gmt_offset: -5, year: 1999}
+      - {gmt_offset: -6, year: 2001}
+  - name: tpch_q13
+    file: queries/tpch_q13.sql
+    size: medium
+    catalog: tpch
+    schemas: [sf10]
+    variants:
+      - {word1: special, word2: requests}
+      - {word1: pending, word2: deposits}
+      - {word1: express, word2: packages}
+
+  # ---- heavy (GBs): fail with EXCEEDED_LOCAL_MEMORY_LIMIT on 2 workers, pass on 4 (see CALIBRATION.md) ----
+  - name: tpch_q18
+    file: queries/tpch_q18.sql
+    size: heavy
+    catalog: tpch
+    schemas: [sf5]
+    variants:
+      - {quantity: 300}
+      - {quantity: 312}
+      - {quantity: 315}
+  - name: tpch_q09
+    file: queries/tpch_q09.sql
+    size: heavy
+    catalog: tpch
+    schemas: [sf5]
+    variants:
+      - {color: green}
+      - {color: blue}
+      - {color: red}
+  - name: tpch_q21
+    file: queries/tpch_q21.sql
+    size: heavy
+    catalog: tpch
+    schemas: [sf5]
+    variants:
+      - {nation: SAUDI ARABIA}
+      - {nation: GERMANY}
+      - {nation: BRAZIL}

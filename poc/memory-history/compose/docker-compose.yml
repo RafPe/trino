@@ -1,0 +1,83 @@
+# Memory-history PoC cluster.
+#   Base (stock image, no listener, no predictor):
+#     TRINO_IMAGE=trinodb/trino:484 docker compose up -d --scale worker=2
+#   Full (PoC images, listener + predictor):
+#     docker compose -f docker-compose.yml -f docker-compose.full.yml --profile full up -d --scale worker=2
+name: mhpoc
+
+x-trino-env: &trino-env
+  QUERY_MAX_MEMORY_PER_NODE: ${QUERY_MAX_MEMORY_PER_NODE:-1GB}
+  QUERY_MAX_MEMORY: ${QUERY_MAX_MEMORY:-6GB}
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: memoryhistory
+      POSTGRES_USER: memoryhistory
+      POSTGRES_PASSWORD: memoryhistory
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U memoryhistory -d memoryhistory"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  coordinator:
+    image: ${TRINO_IMAGE:-trino-memory-history:poc}
+    hostname: coordinator
+    environment: *trino-env
+    ports:
+      - "127.0.0.1:${COORDINATOR_PORT:-18080}:8080"
+    volumes:
+      - ./etc/coordinator/config.properties:/etc/trino/config.properties:ro
+      - ./etc/jvm.config:/etc/trino/jvm.config:ro
+      - ./etc/node.properties:/etc/trino/node.properties:ro
+      - ./etc/catalog:/etc/trino/catalog:ro
+    mem_limit: 6g
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/usr/lib/trino/bin/health-check"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 10s
+
+  worker:
+    image: ${TRINO_IMAGE:-trino-memory-history:poc}
+    # No hostname / container_name / node.id: each replica must be unique.
+    environment: *trino-env
+    volumes:
+      - ./etc/worker/config.properties:/etc/trino/config.properties:ro
+      - ./etc/jvm.config:/etc/trino/jvm.config:ro
+      - ./etc/node.properties:/etc/trino/node.properties:ro
+      - ./etc/catalog:/etc/trino/catalog:ro
+    mem_limit: 6g
+    depends_on:
+      coordinator:
+        condition: service_started
+
+  predictor:
+    image: ${PREDICTOR_IMAGE:-trino-memory-history-predictor:poc}
+    profiles: ["full"]
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/memoryhistory
+      DB_USER: memoryhistory
+      DB_PASSWORD: memoryhistory
+      PER_WORKER_MEMORY_BYTES: ${PER_WORKER_MEMORY_BYTES:-1073741824}
+      MIN_WORKERS: ${MIN_WORKERS:-2}
+      MAX_WORKERS: ${MAX_WORKERS:-6}
+      PORT: "8090"
+    ports:
+      - "127.0.0.1:${PREDICTOR_PORT:-18090}:8090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:

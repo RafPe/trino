@@ -1,0 +1,6 @@
+# Adds the memory-history event listener to the coordinator.
+# Needs TRINO_IMAGE=trino-memory-history:poc (the plugin is not in the stock image).
+services:
+  coordinator:
+    volumes:
+      - ./etc/coordinator/event-listener.properties:/etc/trino/event-listener.properties:ro
