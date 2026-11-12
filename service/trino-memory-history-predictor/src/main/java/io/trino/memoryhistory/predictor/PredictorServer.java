@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.google.common.collect.ImmutableMap;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
@@ -26,7 +27,6 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.time.Duration;
-import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -66,7 +66,7 @@ public class PredictorServer
         server.createContext(RESERVATIONS_PATH, exchange -> handle(exchange, this::reservations));
         server.createContext("/v1/required-workers", exchange -> handle(exchange, this::requiredWorkers));
         server.createContext("/v1/health", exchange -> handle(exchange, this::health));
-        server.createContext("/", exchange -> handle(exchange, _ -> new Response(404, Map.of("error", "not found"))));
+        server.createContext("/", exchange -> handle(exchange, _ -> new Response(404, ImmutableMap.of("error", "not found"))));
     }
 
     public void start()
@@ -119,7 +119,7 @@ public class PredictorServer
                 return badRequest("ttlSeconds must be positive");
             }
             reservations.add(id.get(), predictedBytes.asLong(), Duration.ofSeconds(ttlSeconds));
-            return new Response(201, Map.of("id", id.get()));
+            return new Response(201, ImmutableMap.of("id", id.get()));
         }
         if (!exchange.getRequestMethod().equals("DELETE")) {
             return methodNotAllowed();
@@ -134,7 +134,7 @@ public class PredictorServer
             return methodNotAllowed();
         }
         Reservations.RequiredWorkers required = reservations.requiredWorkers();
-        return new Response(200, Map.of("workers", required.workers(), "reservations", required.reservations()));
+        return new Response(200, ImmutableMap.of("workers", required.workers(), "reservations", required.reservations()));
     }
 
     private Response health(HttpExchange exchange)
@@ -142,7 +142,7 @@ public class PredictorServer
         if (!exchange.getRequestMethod().equals("GET")) {
             return methodNotAllowed();
         }
-        return new Response(200, Map.of("status", "ok"));
+        return new Response(200, ImmutableMap.of("status", "ok"));
     }
 
     private static void handle(HttpExchange exchange, Handler handler)
@@ -157,7 +157,7 @@ public class PredictorServer
         }
         catch (Exception e) {
             log.log(Level.WARNING, "Request failed: " + exchange.getRequestMethod() + " " + exchange.getRequestURI(), e);
-            response = new Response(500, Map.of("error", String.valueOf(e.getMessage())));
+            response = new Response(500, ImmutableMap.of("error", String.valueOf(e.getMessage())));
         }
         try (exchange) {
             if (response.body() == null) {
@@ -201,12 +201,12 @@ public class PredictorServer
 
     private static Response badRequest(String message)
     {
-        return new Response(400, Map.of("error", message));
+        return new Response(400, ImmutableMap.of("error", message));
     }
 
     private static Response methodNotAllowed()
     {
-        return new Response(405, Map.of("error", "method not allowed"));
+        return new Response(405, ImmutableMap.of("error", "method not allowed"));
     }
 
     private interface Handler
