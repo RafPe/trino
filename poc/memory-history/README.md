@@ -27,8 +27,9 @@ client ──▶ gate.py ──(1) POST /v1/predict ─────────�
 | Gate | `gate/gate.py` | Client-side. Asks the predictor, reserves, submits the query with `required_workers_count` so Trino itself waits. |
 | Scaler | KEDA `metrics-api` trigger (k8s) or `gate/scaler.py` (compose) | Sets the number of workers to what the predictor reports. |
 
-Prediction rule: the largest peak among the last 10 successful runs of the fingerprint. If a run
-failed with a memory error and its peak is higher than any success, the prediction is that peak × 2.
+Prediction rule: the largest peak among the last 10 successful runs of the fingerprint. If the query
+failed with a memory error *after* its last successful run (or never succeeded), the prediction is the
+largest known peak × 2. A memory failure that is older than a later success is ignored.
 Required workers = `ceil(predicted × 1.5 / query.max-memory-per-node)`, between 2 and 6.
 An unknown fingerprint gets no prediction and runs unchanged.
 
@@ -145,6 +146,7 @@ Details: [results/REPORT.md](results/REPORT.md).
 | Heavy queries failing ungated on 2 workers | 9 of 9 variants (TPC-H q09, q18, q21 at sf5). |
 | The same queries through the gate | 18 of 18 gated heavy runs finished. Only 2 of them triggered a scale-up themselves (3→6 workers, about 20 s wait in Trino); the other 16 found enough workers still running from the query before, because scale-down waits 120 s. |
 | Memory spread across literal variants of one shape (≥ 100 MB) | max/min 1.04–1.25. |
+| Prediction rule changed after this run | In this run TPC-H q18 was predicted at 3.8 GB (6 workers) in all 6 gated runs while it used 1.6 GB, because an old memory failure had reached a higher peak than the later successes. The rule now ignores a failure once a later run succeeded. Checked with a heavy-queries-only run (`results/heavy-check.jsonl`): q18 asks for 6 workers once, then 3. In that check the cluster stayed at 6 workers, so q18 was not seen running on 3. |
 | Failures in the gated passes | 1 of 78: a small query (TPC-DS q55) failed with `PAGE_TRANSPORT_TIMEOUT` when the compose scaler removed workers under it. The same query failed the same way in the first run. |
 
 ### On Kubernetes (kind, real images)
@@ -174,7 +176,6 @@ Details: [results/REPORT.md](results/REPORT.md).
 - **Long queries can outlive their reservation.** The reservation lasts 1 hour and is not refreshed.
 - **The gate is client-side.** Clients that do not use it get no prediction. Reservations live in the predictor's memory and are lost on restart.
 - **Monitoring queries are recorded too** (for example the gate's own `system.runtime.nodes` query).
-- **An old memory failure can keep a query over-provisioned.** If a failed run had reached a higher peak than later successful runs use, the rule keeps predicting failed peak × 2. In the second run TPC-H q18 was predicted at 3.8 GB (6 workers) in all 6 gated runs while it used 1.6 GB (3 workers would do).
 - **A failed run's peak is only a lower bound.** q21 had reached 1.7 GB when it failed on 2 workers and used 3.3 GB when it finished; the × 2 growth factor happened to cover that.
 - **Cluster size is not part of the history.** Runs on 2, 4 and 6 workers are mixed. Whether the same query's peak depends on the worker count was not analysed.
 
