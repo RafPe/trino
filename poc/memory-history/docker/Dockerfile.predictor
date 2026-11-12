@@ -1,0 +1,9 @@
+# Memory-history predictor service.
+# Build context: a directory holding predictor.jar (see build-images.sh).
+FROM eclipse-temurin:25-jre
+
+RUN useradd --uid 10001 --no-create-home predictor
+COPY predictor.jar /opt/predictor/predictor.jar
+USER predictor
+EXPOSE 8090
+ENTRYPOINT ["java", "-cp", "/opt/predictor/predictor.jar", "io.trino.memoryhistory.predictor.PredictorMain"]

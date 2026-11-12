@@ -1,0 +1,5 @@
+# Official Trino 484 image plus the memory-history event listener plugin.
+# Build context: the unpacked plugin directory (see build-images.sh).
+FROM trinodb/trino:484
+
+COPY . /usr/lib/trino/plugin/memory-history/
