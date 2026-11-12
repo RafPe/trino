@@ -15,14 +15,25 @@ PREDICTOR_PORT="${PREDICTOR_PORT:-28090}"
 OUT="${POC_DIR}/results/k8s-runs.jsonl"
 WATCH="${POC_DIR}/results/k8s-workers.log"
 
-kc -n "${NAMESPACE}" port-forward svc/trino "${TRINO_PORT}:8080" >/dev/null 2>&1 &
+# Call kubectl directly (not the kc function) so $! is the kubectl process and cleanup really stops it.
+# Stop forwards left over from an interrupted run first: a stale one keeps the port but points at a dead pod.
+pkill -f "kubeconfig ${KUBECONFIG_FILE} -n ${NAMESPACE} port-forward" 2>/dev/null || true
+kubectl --kubeconfig "${KUBECONFIG_FILE}" -n "${NAMESPACE}" port-forward svc/trino "${TRINO_PORT}:8080" >/dev/null 2>&1 &
 PF1=$!
-kc -n "${NAMESPACE}" port-forward svc/predictor "${PREDICTOR_PORT}:8090" >/dev/null 2>&1 &
+kubectl --kubeconfig "${KUBECONFIG_FILE}" -n "${NAMESPACE}" port-forward svc/predictor "${PREDICTOR_PORT}:8090" >/dev/null 2>&1 &
 PF2=$!
 WATCHER=""
 cleanup() { kill ${PF1} ${PF2} ${WATCHER} 2>/dev/null || true; }
 trap cleanup EXIT
-sleep 3
+# Wait until both port-forwards answer (they can take a few seconds after a rollout).
+for _ in $(seq 1 60); do
+    if curl -sf "http://localhost:${TRINO_PORT}/v1/info" >/dev/null && curl -sf "http://localhost:${PREDICTOR_PORT}/v1/health" >/dev/null; then
+        break
+    fi
+    sleep 1
+done
+curl -sf "http://localhost:${TRINO_PORT}/v1/info" >/dev/null || { echo "port-forward to Trino is not answering" >&2; exit 1; }
+curl -sf "http://localhost:${PREDICTOR_PORT}/v1/health" >/dev/null || { echo "port-forward to the predictor is not answering" >&2; exit 1; }
 
 run() { "${PY}" "${POC_DIR}/workload/run_workload.py" --server "http://localhost:${TRINO_PORT}" \
             --predictor "http://localhost:${PREDICTOR_PORT}" --only "${TEMPLATE}" --output "${OUT}" "$@"; }
