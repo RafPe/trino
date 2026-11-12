@@ -50,12 +50,13 @@ docker/build-images.sh
 The script builds the three PoC modules and the Trino modules they depend on (`-am`), so the first
 run on a fresh checkout takes several minutes. It was not tested with an empty Maven cache.
 
-Unit tests (optional, need Docker for Testcontainers):
+Unit tests (optional, need Docker for Testcontainers). The test command needs the Trino modules the
+PoC depends on in the local Maven cache; `build-images.sh` does not put them there, so install them once:
 
 ```bash
-(cd ../.. && mvnd -pl lib/trino-memory-history-fingerprint,plugin/trino-memory-history,service/trino-memory-history-predictor -am test \
-    -Dair.check.skip-all=true -Dsurefire.failIfNoSpecifiedTests=false \
-    -Dtest='TestQueryFingerprint,TestMemoryHistory*,TestPrediction*,TestPredictor*,TestReservations*')
+M=lib/trino-memory-history-fingerprint,plugin/trino-memory-history,service/trino-memory-history-predictor
+(cd ../.. && mvnd -pl $M -am install -DskipTests -Dair.check.skip-all=true)   # once
+(cd ../.. && mvnd -pl $M test -Dair.check.skip-all=true)                      # 39 tests
 ```
 
 ## 2. Python environment
