@@ -36,7 +36,7 @@ curl -sf "http://localhost:${TRINO_PORT}/v1/info" >/dev/null || { echo "port-for
 curl -sf "http://localhost:${PREDICTOR_PORT}/v1/health" >/dev/null || { echo "port-forward to the predictor is not answering" >&2; exit 1; }
 
 run() { "${PY}" "${POC_DIR}/workload/run_workload.py" --server "http://localhost:${TRINO_PORT}" \
-            --predictor "http://localhost:${PREDICTOR_PORT}" --only "${TEMPLATE}" --output "${OUT}" "$@"; }
+            --predictor "http://localhost:${PREDICTOR_PORT}" --only "${TEMPLATE}" --output "${OUT}" --require-predictor "$@"; }
 
 rm -f "${OUT}" "${WATCH}"
 log "active workers: $(active_workers)"

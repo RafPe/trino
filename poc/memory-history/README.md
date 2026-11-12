@@ -159,7 +159,7 @@ Compose stack, real plugin and predictor, 117 workload runs. Details: [results/R
 
 - The listener never fails a query: inserts run on a background thread with 10 s timeouts, at most 1,000 records wait in memory, and extra records are dropped and counted. If the history table disappears, it is created again.
 - The predictor answers `503` within about 3 s when it cannot reach PostgreSQL, and at most 16 predictions run at once.
-- The gate treats any predictor error as "unknown query" and submits the query unchanged.
+- The gate treats any predictor error as "unknown query": it prints a warning and submits the query unchanged. With `--require-predictor` it exits with code 2 instead and submits nothing. `report.py` shows how many gated runs had no predictor.
 
 ## Known limits
 

@@ -137,6 +137,11 @@ def build_report(runs, history, source):
     gated = [r for r in runs if r.get("gated") and r.get("pass") == "predict"]
     out("## Hit rate (predict pass, gated)")
     out("")
+    unreachable = sum(bool((r.get("prediction") or {}).get("error")) for r in gated)
+    if unreachable:
+        out(f"**Warning: the predictor could not be reached for {unreachable} of {len(gated)} gated runs; "
+            "those queries ran without the gate.**")
+        out("")
     if gated:
         hits = sum(r["_known"] for r in gated)
         out(f"{hits} of {len(gated)} queries had a known fingerprint: **{hits / len(gated):.0%}**.")

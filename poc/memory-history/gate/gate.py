@@ -130,6 +130,10 @@ def predict(predictor, sql, catalog, schema):
     return r.json()
 
 
+class PredictorUnavailable(RuntimeError):
+    """The predictor did not answer and the caller asked for it to be required."""
+
+
 def run_query(
         sql,
         *,
@@ -141,8 +145,13 @@ def run_query(
         gate=True,
         tags=(),
         session_properties=None,
-        max_wait=MAX_WAIT):
-    """Run one query, optionally through the gate. Returns a JSON-serializable dict."""
+        max_wait=MAX_WAIT,
+        require_predictor=False):
+    """Run one query, optionally through the gate. Returns a JSON-serializable dict.
+
+    When the predictor cannot be reached the query runs unchanged and a warning goes to stderr;
+    with require_predictor=True a PredictorUnavailable error is raised instead and nothing is submitted.
+    """
     sql = sql.strip().rstrip(";").strip()
     session = dict(DEFAULT_SESSION_PROPERTIES)
     session.update(session_properties or {})
@@ -170,6 +179,10 @@ def run_query(
         try:
             prediction = predict(predictor, sql, catalog, schema)
         except (requests.RequestException, ValueError) as e:
+            if require_predictor:
+                raise PredictorUnavailable(str(e)) from e
+            # Fail open: the query still runs, but say so. A silent fallback hides a broken predictor.
+            print(f"warning: predictor unavailable, running WITHOUT the gate: {e}", file=sys.stderr)
             prediction = {"error": f"predictor unavailable: {e}"}
         result["prediction"] = prediction
         required = prediction.get("requiredWorkers")
@@ -248,6 +261,8 @@ def main(argv=None):
     p.add_argument("--schema", default="sf10")
     p.add_argument("--user", default="poc")
     p.add_argument("--no-gate", action="store_true", help="submit the query unchanged")
+    p.add_argument("--require-predictor", action="store_true",
+                   help="exit with code 2 instead of running ungated when the predictor cannot be reached")
     p.add_argument("--tag", action="append", default=[], type=_key_value, help="client tag k=v (repeatable)")
     p.add_argument("--session", action="append", default=[], type=_key_value, help="extra session property name=value (repeatable)")
     src = p.add_mutually_exclusive_group(required=True)
@@ -256,16 +271,21 @@ def main(argv=None):
     args = p.parse_args(argv)
 
     sql = open(args.file).read() if args.file else args.execute
-    result = run_query(
-        sql,
-        server=args.server.rstrip("/"),
-        predictor=args.predictor.rstrip("/"),
-        catalog=args.catalog,
-        schema=args.schema,
-        user=args.user,
-        gate=not args.no_gate,
-        tags=[f"{k}={v}" for k, v in args.tag],
-        session_properties=dict(args.session))
+    try:
+        result = run_query(
+            sql,
+            server=args.server.rstrip("/"),
+            predictor=args.predictor.rstrip("/"),
+            catalog=args.catalog,
+            schema=args.schema,
+            user=args.user,
+            gate=not args.no_gate,
+            tags=[f"{k}={v}" for k, v in args.tag],
+            session_properties=dict(args.session),
+            require_predictor=args.require_predictor)
+    except PredictorUnavailable as e:
+        print(f"error: predictor unavailable, query not submitted: {e}", file=sys.stderr)
+        return 2
     print(json.dumps(result, sort_keys=True))
     return 0 if result["state"] == "FINISHED" else 1
 

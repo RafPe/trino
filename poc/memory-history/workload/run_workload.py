@@ -54,6 +54,8 @@ def main():
     p.add_argument("--predictor", default=gate.DEFAULT_PREDICTOR)
     p.add_argument("--user", default="poc")
     p.add_argument("--no-gate", action="store_true", help="submit every query unchanged")
+    p.add_argument("--require-predictor", action="store_true",
+                   help="stop instead of running ungated when the predictor cannot be reached")
     p.add_argument("--only", default=None, help="comma-separated template names")
     p.add_argument("--size", default=None, help="comma-separated sizes (small,medium,heavy)")
     p.add_argument("--output", default=os.path.join(HERE, "..", "results", "runs.jsonl"))
@@ -87,7 +89,8 @@ def main():
                         user=args.user,
                         gate=not args.no_gate,
                         tags=tags,
-                        session_properties=session)
+                        session_properties=session,
+                        require_predictor=args.require_predictor)
                     result.update({
                         "pass": args.pass_name,
                         "template": t["name"],
