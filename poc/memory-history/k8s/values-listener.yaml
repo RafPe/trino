@@ -1,0 +1,19 @@
+# Optional overlay: enables the memory-history event listener (PLAN.md Contract 2).
+# Use only with an image that contains the plugin (trino-memory-history:poc);
+# the stock trinodb/trino image has no such plugin and the coordinator would fail to start.
+#
+# The listener runs on the coordinator only (Contract 2), so it is written as a
+# coordinator-only config file instead of the chart's `eventListenerProperties`,
+# which the chart renders into the coordinator AND the worker config maps.
+
+coordinator:
+  additionalConfigFiles:
+    memory-history-listener.properties: |
+      event-listener.name=memory-history
+      memory-history.db.url=jdbc:postgresql://postgres.{{ .Release.Namespace }}.svc:5432/memory_history
+      memory-history.db.user=trino
+      memory-history.db.password=trino
+
+server:
+  coordinatorExtraConfig: |
+    event-listener.config-files=/etc/trino/memory-history-listener.properties

@@ -1,0 +1,12 @@
+# Single-node kind cluster for the memory-history PoC.
+# Cluster name and kubeconfig are set by up.sh (--name mhpoc --kubeconfig .kubeconfig).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      # Propagate ConfigMap changes (the predictor stub reads its value from a
+      # mounted ConfigMap) to pods within ~10 s instead of the default ~60-90 s.
+      - |
+        kind: KubeletConfiguration
+        syncFrequency: 10s
