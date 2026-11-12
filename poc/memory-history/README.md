@@ -129,20 +129,23 @@ PREDICTOR_IMAGE=trino-memory-history-predictor:poc LISTENER=1 ./up.sh
 not touch the default kubeconfig or other clusters. KEDA reads `GET /v1/required-workers` from the
 predictor every 5 s and sets the worker Deployment's replicas to that number (2 to 6).
 
-## What the first full run showed
+## What the full run showed
 
-Compose stack, real plugin and predictor, 117 workload runs. Details: [results/REPORT.md](results/REPORT.md).
+Compose stack, real plugin and predictor, 117 workload runs, starting from an empty history. These are
+the numbers of the second full run, made after the review fixes; the first run gave the same picture.
+Details: [results/REPORT.md](results/REPORT.md).
 
 | Question | Result |
 |---|---|
 | Do literal variants share one fingerprint? | Yes: 13 templates → 13 fingerprints, 3 variants each. |
 | Hit rate in the gated passes | 78 of 78 (every query shape repeats in this workload). |
-| Prediction accuracy, peak ≥ 100 MB, predicted from successful runs | predicted / actual: median 1.05, p90 1.09, range 0.97–1.17 (31 runs). **In-sample:** the same literals had already run. |
-| The same, predicting each run only from the *other* literal variants of its shape | median 1.04, p90 1.08, range 0.96–1.17 (45 runs). |
-| Prediction accuracy, predicted from a memory failure | median 1.99 (range 1.04–2.14, 5 runs): over-provisions once, then corrects itself. |
+| Prediction accuracy, peak ≥ 100 MB, predicted from successful runs | predicted / actual: median 1.06, p90 1.09, range 0.96–1.25 (28 runs). **In-sample:** the same literals had already run. |
+| The same, predicting each run only from the *other* literal variants of its shape (retrospective cross-check) | median 1.05, p90 1.08, range 0.98–1.25 (45 runs). |
+| Prediction accuracy, predicted from a memory failure | median 2.39, range 0.98–2.51 (8 runs): usually over-provisions; once it was slightly low (0.98) and the safety factor covered it. |
 | Heavy queries failing ungated on 2 workers | 9 of 9 variants (TPC-H q09, q18, q21 at sf5). |
-| The same queries through the gate | 9 of 9 variants finished (18 of 18 gated heavy runs). Only 3 of those 18 runs triggered a scale-up themselves (3→4, 3→6, 4→6 workers) and waited about 20 s in Trino; the other 15 found enough workers still running from the query before, because scale-down waits 120 s. |
-| Memory spread across literal variants of one shape (≥ 100 MB) | max/min 1.02–1.17. |
+| The same queries through the gate | 18 of 18 gated heavy runs finished. Only 2 of them triggered a scale-up themselves (3→6 workers, about 20 s wait in Trino); the other 16 found enough workers still running from the query before, because scale-down waits 120 s. |
+| Memory spread across literal variants of one shape (≥ 100 MB) | max/min 1.04–1.25. |
+| Failures in the gated passes | 1 of 78: a small query (TPC-DS q55) failed with `PAGE_TRANSPORT_TIMEOUT` when the compose scaler removed workers under it. The same query failed the same way in the first run. |
 
 ### On Kubernetes (kind, real images)
 
@@ -166,11 +169,12 @@ Compose stack, real plugin and predictor, 117 workload runs. Details: [results/R
 - **Only repeated queries.** A new query shape runs unchanged and can fail; its failure teaches the next run.
 - **Text fingerprint.** Literals that change the data volume (a 1-day vs a 1-year range) share one fingerprint. The workload's literals did not change memory much; real workloads may.
 - **No per-node peak.** Trino reports a cluster-wide peak and the largest single task, not a per-node peak. Workers are computed as total / per-node limit with a 1.5 safety factor. Skewed data or broadcast joins need more (TPC-H q18 needs 3 workers at 1.7 GB).
-- **Scale-down can kill queries on compose.** `scaler.py` removes worker containers abruptly; one small query failed with `PAGE_TRANSPORT_TIMEOUT` in the first run. The Kubernetes setup uses Trino's graceful worker shutdown.
+- **Scale-down can kill queries on compose.** `scaler.py` removes worker containers abruptly; one small query failed with `PAGE_TRANSPORT_TIMEOUT` in both full runs, at the same point (scale-down from 6 to 2 workers). The Kubernetes setup uses Trino's graceful worker shutdown.
 - **Small queries are noisy.** Peaks under about 10 MB vary from bytes to megabytes between runs. They do not affect scaling.
 - **Long queries can outlive their reservation.** The reservation lasts 1 hour and is not refreshed.
 - **The gate is client-side.** Clients that do not use it get no prediction. Reservations live in the predictor's memory and are lost on restart.
 - **Monitoring queries are recorded too** (for example the gate's own `system.runtime.nodes` query).
+- **An old memory failure can keep a query over-provisioned.** If a failed run had reached a higher peak than later successful runs use, the rule keeps predicting failed peak × 2. In the second run TPC-H q18 was predicted at 3.8 GB (6 workers) in all 6 gated runs while it used 1.6 GB (3 workers would do).
 - **A failed run's peak is only a lower bound.** q21 had reached 1.7 GB when it failed on 2 workers and used 3.3 GB when it finished; the × 2 growth factor happened to cover that.
 - **Cluster size is not part of the history.** Runs on 2, 4 and 6 workers are mixed. Whether the same query's peak depends on the worker count was not analysed.
 
