@@ -26,10 +26,12 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -48,11 +50,14 @@ public class PredictorServer
             .build();
     private static final long DEFAULT_TTL_SECONDS = 900;
     private static final String RESERVATIONS_PATH = "/v1/reservations";
+    // Predictions read the database; bound them so a stalled database cannot pile up connections
+    private static final int MAX_CONCURRENT_PREDICTIONS = 16;
 
     private final PredictorService predictor;
     private final Reservations reservations;
     private final HttpServer server;
     private final ExecutorService executor;
+    private final Semaphore predictions = new Semaphore(MAX_CONCURRENT_PREDICTIONS);
 
     public PredictorServer(PredictorService predictor, Reservations reservations, InetSocketAddress address)
             throws IOException
@@ -97,7 +102,19 @@ public class PredictorServer
         if (sql.isEmpty()) {
             return badRequest("sql is required");
         }
-        return new Response(200, predictor.predict(sql.get(), text(request, "catalog"), text(request, "schema")));
+        if (!predictions.tryAcquire()) {
+            return new Response(503, ImmutableMap.of("error", "too many concurrent predictions"));
+        }
+        try {
+            return new Response(200, predictor.predict(sql.get(), text(request, "catalog"), text(request, "schema")));
+        }
+        catch (SQLException e) {
+            log.log(Level.WARNING, "History database unavailable", e);
+            return new Response(503, ImmutableMap.of("error", "history database unavailable: " + e.getMessage()));
+        }
+        finally {
+            predictions.release();
+        }
     }
 
     private Response reservations(HttpExchange exchange)

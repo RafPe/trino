@@ -40,12 +40,19 @@ public class HistoryRepository
             LIMIT ?
             """;
 
+    // PostgreSQL JDBC timeouts in seconds; parameters in the JDBC URL take precedence
+    private static final String TIMEOUT_SECONDS = "10";
+    private static final int QUERY_TIMEOUT_SECONDS = 10;
+
     private final String url;
     private final Properties properties = new Properties();
 
     public HistoryRepository(PredictorConfig config)
     {
         this.url = requireNonNull(config.dbUrl(), "dbUrl is null");
+        properties.setProperty("connectTimeout", TIMEOUT_SECONDS);
+        properties.setProperty("socketTimeout", TIMEOUT_SECONDS);
+        properties.setProperty("loginTimeout", TIMEOUT_SECONDS);
         config.dbUser().ifPresent(user -> properties.setProperty("user", user));
         config.dbPassword().ifPresent(password -> properties.setProperty("password", password));
     }
@@ -58,6 +65,7 @@ public class HistoryRepository
     {
         try (Connection connection = DriverManager.getConnection(url, properties);
                 PreparedStatement statement = connection.prepareStatement(SELECT_RUNS)) {
+            statement.setQueryTimeout(QUERY_TIMEOUT_SECONDS);
             statement.setString(1, fingerprint);
             statement.setInt(2, limit);
             ImmutableList.Builder<HistoryRun> runs = ImmutableList.builder();

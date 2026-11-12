@@ -30,6 +30,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.InstantSource;
 import java.util.Optional;
@@ -134,6 +135,26 @@ final class TestPredictorServer
         assertThat(post("/v1/predict", "{\"sql\": \"SELEC broken\"}", 200).toString()).isEqualTo("{\"supported\":false,\"known\":false}");
         post("/v1/predict", "{}", 400);
         post("/v1/predict", "not json", 400);
+    }
+
+    @Test
+    void testDatabaseUnavailable()
+            throws Exception
+    {
+        PredictorConfig config = new PredictorConfig("jdbc:postgresql://127.0.0.1:1/none", Optional.empty(), Optional.empty(), GB, 2, 6, 1.2, 2.0, 10, 0);
+        try (PredictorServer unavailable = new PredictorServer(
+                new PredictorService(config, new HistoryRepository(config)),
+                new Reservations(config, InstantSource.system()),
+                new InetSocketAddress("127.0.0.1", 0))) {
+            unavailable.start();
+            long start = System.nanoTime();
+            HttpResponse<String> response = send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:%s/v1/predict".formatted(unavailable.port())))
+                    .POST(ofString("{\"sql\": \"SELECT 1 FROM orders\"}"))
+                    .build());
+            assertThat(response.statusCode()).isEqualTo(503);
+            assertThat(MAPPER.readTree(response.body()).get("error").asText()).startsWith("history database unavailable");
+            assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(10));
+        }
     }
 
     @Test
