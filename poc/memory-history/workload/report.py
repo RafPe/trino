@@ -124,13 +124,14 @@ def build_report(runs, history, source):
 
     out("## Summary per pass")
     out("")
-    out("| pass | runs | gated | FINISHED | memory errors | other errors | known prediction | gated with wait |")
-    out("|---|---|---|---|---|---|---|---|")
+    out("| pass | runs | gated | FINISHED | memory errors | other errors | known prediction | waited for workers (> 1 s) | workers added during the run |")
+    out("|---|---|---|---|---|---|---|---|---|")
     for name, rs in sorted(by_pass.items()):
         out(f"| {name} | {len(rs)} | {sum(bool(r.get('gated')) for r in rs)} | {sum(r['_state'] == 'FINISHED' for r in rs)} "
             f"| {sum(r['_error'] in MEMORY_ERRORS for r in rs)} "
             f"| {sum(r['_state'] != 'FINISHED' and r['_error'] not in MEMORY_ERRORS for r in rs)} "
-            f"| {sum(r['_known'] for r in rs)} | {sum(r.get('required_workers') is not None for r in rs)} |")
+            f"| {sum(r['_known'] for r in rs)} | {sum((r.get('wait_ms') or 0) > 1000 for r in rs)} "
+            f"| {sum((r.get('workers_after') or 0) > (r.get('workers_before') or 0) for r in rs)} |")
     out("")
 
     gated = [r for r in runs if r.get("gated") and r.get("pass") == "predict"]
@@ -181,6 +182,30 @@ def build_report(runs, history, source):
             if values:
                 out(f"| {name} | {len(values)} | {sum(v < 1 for v in values)} | {statistics.median(values):.2f} | "
                     f"{percentile(values, 0.9):.2f} | {min(values):.2f} | {max(values):.2f} |")
+        out("")
+        out("These ratios are **in-sample**: every query in the predict passes had already run with the same literals, "
+            "and the prediction is the maximum over that history.")
+        out("")
+        out("### Leave-one-variant-out")
+        out("")
+        out("For each FINISHED run with a peak ≥ 100 MB, predict from the runs of the *other* literal variants of the "
+            "same template only (maximum of their peaks). This is what a query with new literals would get.")
+        out("")
+        by_template = defaultdict(lambda: defaultdict(list))
+        for r in runs:
+            if r["_state"] == "FINISHED" and r["_peak"]:
+                by_template[(r.get("template"), r.get("schema"))][r.get("variant")].append(r["_peak"])
+        loo = []
+        for variants in by_template.values():
+            for variant, peaks in variants.items():
+                others = [x for v, ps in variants.items() if v != variant for x in ps]
+                if others:
+                    loo.extend(max(others) / peak for peak in peaks if peak >= big)
+        if loo:
+            out(f"- n = {len(loo)}, under-predicted: {sum(v < 1 for v in loo)}")
+            out(f"- median: {statistics.median(loo):.2f}, p90: {percentile(loo, 0.9):.2f}, min: {min(loo):.2f}, max: {max(loo):.2f}")
+        else:
+            out("Not enough runs.")
     else:
         out("No hits with an actual peak yet.")
     out("")

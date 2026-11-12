@@ -34,7 +34,9 @@ DEFAULT_SESSION_PROPERTIES = {
     "task_concurrency": "4",
 }
 MAX_WAIT = "10m"
-RESERVATION_TTL_SECONDS = 900
+# Must cover the wait for workers (MAX_WAIT) plus the run time of the query. The gate does not
+# refresh it, so a query that runs longer than this can lose its workers (known limit).
+RESERVATION_TTL_SECONDS = 3600
 HTTP_TIMEOUT = 10
 
 _SIZE_UNITS = {"B": 1, "kB": 1024, "MB": 1024**2, "GB": 1024**3, "TB": 1024**4, "PB": 1024**5}
@@ -182,11 +184,15 @@ def run_query(
                     timeout=HTTP_TIMEOUT)
                 r.raise_for_status()
             except requests.RequestException as e:
-                print(f"warning: reservation failed: {e}", file=sys.stderr)
-            session["required_workers_count"] = str(required)
-            session["required_workers_max_wait_time"] = max_wait
-            result["required_workers"] = required
-            result["reservation_id"] = reservation_id
+                # Without a reservation nothing scales the cluster up, so do not make Trino wait:
+                # run the query unchanged instead of failing it after the wait times out.
+                print(f"warning: reservation failed, running without the gate: {e}", file=sys.stderr)
+                reservation_id = None
+            if reservation_id is not None:
+                session["required_workers_count"] = str(required)
+                session["required_workers_max_wait_time"] = max_wait
+                result["required_workers"] = required
+                result["reservation_id"] = reservation_id
 
     started = time.monotonic()
     conn = _connect(server, user, catalog, schema, session, sorted(tags))

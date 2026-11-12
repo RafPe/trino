@@ -1,14 +1,13 @@
 # Memory-history PoC report
 
-Generated 2026-11-12T14:20:18+00:00 from 117 runs. Actual values from: PostgreSQL query_history (falling back to runs.jsonl per query).
-Runs found in `query_history`: 117 of 117.
+Generated 2026-11-12T14:41:39+00:00 from 117 runs. Actual values from: runs.jsonl (Trino REST API).
 
 ## Summary per pass
 
-| pass | runs | gated | FINISHED | memory errors | other errors | known prediction | gated with wait |
-|---|---|---|---|---|---|---|---|
-| learn | 39 | 0 | 30 | 9 | 0 | 0 | 0 |
-| predict | 78 | 78 | 77 | 0 | 1 | 78 | 78 |
+| pass | runs | gated | FINISHED | memory errors | other errors | known prediction | waited for workers (> 1 s) | workers added during the run |
+|---|---|---|---|---|---|---|---|---|
+| learn | 39 | 0 | 30 | 9 | 0 | 0 | 0 | 0 |
+| predict | 78 | 78 | 77 | 0 | 1 | 78 | 5 | 5 |
 
 ## Hit rate (predict pass, gated)
 
@@ -31,6 +30,15 @@ The same ratio by group. Queries under 100 MB are noisy (a few kB to a few MB) a
 | actual peak ≥ 100 MB, predicted from successful runs | 31 | 4 | 1.05 | 1.09 | 0.97 | 1.17 |
 | actual peak ≥ 100 MB, predicted from a memory failure (peak × growth factor) | 5 | 0 | 1.99 | 2.13 | 1.04 | 2.14 |
 | actual peak < 100 MB | 41 | 10 | 1.04 | 2559.47 | 0.00 | 23905.83 |
+
+These ratios are **in-sample**: every query in the predict passes had already run with the same literals, and the prediction is the maximum over that history.
+
+### Leave-one-variant-out
+
+For each FINISHED run with a peak ≥ 100 MB, predict from the runs of the *other* literal variants of the same template only (maximum of their peaks). This is what a query with new literals would get.
+
+- n = 45, under-predicted: 7
+- median: 1.04, p90: 1.08, min: 0.96, max: 1.17
 
 ## Spread of actual peak within one template (FINISHED runs, all passes)
 

@@ -1,5 +1,5 @@
 # Real predictor (PLAN.md Contract 3). up.sh replaces ${PREDICTOR_IMAGE} and applies this
-# when PREDICTOR_IMAGE is set. Not exercised yet: the image does not exist at the time of writing.
+# when PREDICTOR_IMAGE is set.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
