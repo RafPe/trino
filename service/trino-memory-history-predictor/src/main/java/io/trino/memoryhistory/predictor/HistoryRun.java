@@ -13,18 +13,21 @@
  */
 package io.trino.memoryhistory.predictor;
 
+import java.time.Instant;
 import java.util.Optional;
 
 import static java.util.Objects.requireNonNull;
 
 /**
  * One row of {@code query_history}, as needed for prediction.
+ * {@code endTime} orders the runs: the prediction rule uses it to find failures newer than the last success.
  */
-public record HistoryRun(String queryState, Optional<String> errorCode, long peakUserMemoryBytes, long peakTaskUserMemoryBytes)
+public record HistoryRun(String queryState, Optional<String> errorCode, long peakUserMemoryBytes, long peakTaskUserMemoryBytes, Instant endTime)
 {
     public HistoryRun
     {
         requireNonNull(queryState, "queryState is null");
         requireNonNull(errorCode, "errorCode is null");
+        requireNonNull(endTime, "endTime is null");
     }
 }

@@ -13,8 +13,13 @@
  */
 package io.trino.memoryhistory.predictor;
 
+import com.google.common.collect.ImmutableList;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
@@ -25,6 +30,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 final class TestPredictionRule
 {
     private static final double GROWTH = 2.0;
+    private static final Instant NEWEST_END_TIME = Instant.parse("2026-01-01T12:00:00Z");
 
     @Test
     void testNoRuns()
@@ -37,7 +43,7 @@ final class TestPredictionRule
     @Test
     void testOnlyOtherFailures()
     {
-        Prediction prediction = PredictionRule.predict(List.of(failed("USER_CANCELED", 900, 90), failed("SYNTAX_ERROR", 0, 0)), GROWTH);
+        Prediction prediction = PredictionRule.predict(newestFirst(failed("USER_CANCELED", 900, 90), failed("SYNTAX_ERROR", 0, 0)), GROWTH);
         assertThat(prediction).isEqualTo(new Prediction(2, 0, 0, Optional.empty(), Optional.empty(), Optional.empty()));
         assertThat(prediction.known()).isFalse();
     }
@@ -46,7 +52,7 @@ final class TestPredictionRule
     void testMaxOfSuccessfulRuns()
     {
         Prediction prediction = PredictionRule.predict(
-                List.of(finished(300, 30), finished(500, 20), finished(400, 50), failed("USER_CANCELED", 9000, 900)),
+                newestFirst(finished(300, 30), finished(500, 20), finished(400, 50), failed("USER_CANCELED", 9000, 900)),
                 GROWTH);
         assertThat(prediction).isEqualTo(new Prediction(4, 3, 0, Optional.of(500L), Optional.of(50L), Optional.of(BASIS_SUCCESSFUL_RUNS)));
         assertThat(prediction.known()).isTrue();
@@ -56,37 +62,110 @@ final class TestPredictionRule
     void testOnlyMemoryFailures()
     {
         Prediction prediction = PredictionRule.predict(
-                List.of(failed("EXCEEDED_LOCAL_MEMORY_LIMIT", 1000, 100), failed("CLUSTER_OUT_OF_MEMORY", 1500, 80)),
+                newestFirst(failed("EXCEEDED_LOCAL_MEMORY_LIMIT", 1000, 100), failed("CLUSTER_OUT_OF_MEMORY", 1500, 80)),
                 GROWTH);
         assertThat(prediction).isEqualTo(new Prediction(2, 0, 2, Optional.of(3000L), Optional.of(200L), Optional.of(BASIS_MEMORY_FAILURE_GROWTH)));
     }
 
     @Test
-    void testMemoryFailureAboveSuccessfulRuns()
+    void testOlderMemoryFailuresAboveSuccessfulRunsAreIgnored()
     {
+        // TPC-H q18: three memory failures on a small cluster, then successes on a larger one
         Prediction prediction = PredictionRule.predict(
-                List.of(failed("EXCEEDED_GLOBAL_MEMORY_LIMIT", 1000, 100), finished(800, 300)),
-                1.5);
-        // user memory: maxF 1000 > maxS 800 -> 1500; task memory: maxF 100 < maxS 300 -> 300
-        assertThat(prediction).isEqualTo(new Prediction(2, 1, 1, Optional.of(1500L), Optional.of(300L), Optional.of(BASIS_MEMORY_FAILURE_GROWTH)));
+                newestFirst(
+                        finished(1_600_000_000L, 400_000_000L),
+                        finished(1_550_000_000L, 390_000_000L),
+                        finished(1_600_000_000L, 410_000_000L),
+                        failed("EXCEEDED_GLOBAL_MEMORY_LIMIT", 1_900_000_000L, 900_000_000L),
+                        failed("EXCEEDED_GLOBAL_MEMORY_LIMIT", 1_900_000_000L, 900_000_000L),
+                        failed("EXCEEDED_GLOBAL_MEMORY_LIMIT", 1_900_000_000L, 900_000_000L)),
+                GROWTH);
+        assertThat(prediction).isEqualTo(new Prediction(6, 3, 3, Optional.of(1_600_000_000L), Optional.of(410_000_000L), Optional.of(BASIS_SUCCESSFUL_RUNS)));
     }
 
     @Test
-    void testMemoryFailureBelowSuccessfulRuns()
+    void testNewerMemoryFailureBelowSuccessfulRuns()
     {
         Prediction prediction = PredictionRule.predict(
-                List.of(failed("EXCEEDED_LOCAL_MEMORY_LIMIT", 700, 70), finished(800, 80)),
+                newestFirst(failed("EXCEEDED_LOCAL_MEMORY_LIMIT", 700, 70), finished(800, 80), finished(600, 60)),
                 GROWTH);
-        assertThat(prediction).isEqualTo(new Prediction(2, 1, 1, Optional.of(800L), Optional.of(80L), Optional.of(BASIS_SUCCESSFUL_RUNS)));
+        // max(maxS 800, maxF_recent 700) x 2; task memory: max(80, 70) x 2
+        assertThat(prediction).isEqualTo(new Prediction(3, 2, 1, Optional.of(1600L), Optional.of(160L), Optional.of(BASIS_MEMORY_FAILURE_GROWTH)));
     }
 
-    private static HistoryRun finished(long peakUserMemoryBytes, long peakTaskUserMemoryBytes)
+    @Test
+    void testNewerMemoryFailureAboveSuccessfulRuns()
     {
-        return new HistoryRun("FINISHED", Optional.empty(), peakUserMemoryBytes, peakTaskUserMemoryBytes);
+        Prediction prediction = PredictionRule.predict(
+                newestFirst(failed("EXCEEDED_GLOBAL_MEMORY_LIMIT", 1000, 100), finished(800, 300)),
+                1.5);
+        // user memory: max(800, 1000) x 1.5; task memory: max(300, 100) x 1.5
+        assertThat(prediction).isEqualTo(new Prediction(2, 1, 1, Optional.of(1500L), Optional.of(450L), Optional.of(BASIS_MEMORY_FAILURE_GROWTH)));
     }
 
-    private static HistoryRun failed(String errorCode, long peakUserMemoryBytes, long peakTaskUserMemoryBytes)
+    @Test
+    void testOnlyFailuresNewerThanLastSuccessCount()
     {
-        return new HistoryRun("FAILED", Optional.of(errorCode), peakUserMemoryBytes, peakTaskUserMemoryBytes);
+        Prediction prediction = PredictionRule.predict(
+                newestFirst(
+                        failed("CLUSTER_OUT_OF_MEMORY", 500, 50),
+                        finished(800, 80),
+                        failed("EXCEEDED_LOCAL_MEMORY_LIMIT", 5000, 500),
+                        finished(700, 70)),
+                GROWTH);
+        // the 5000 failure is older than the last success: max(800, 500) x 2
+        assertThat(prediction).isEqualTo(new Prediction(4, 2, 2, Optional.of(1600L), Optional.of(160L), Optional.of(BASIS_MEMORY_FAILURE_GROWTH)));
     }
+
+    @Test
+    void testNewestOtherFailuresAreIgnored()
+    {
+        Prediction prediction = PredictionRule.predict(
+                newestFirst(
+                        failed("USER_CANCELED", 9000, 900),
+                        failed("SYNTAX_ERROR", 0, 0),
+                        finished(800, 80),
+                        failed("EXCEEDED_LOCAL_MEMORY_LIMIT", 1000, 100)),
+                GROWTH);
+        assertThat(prediction).isEqualTo(new Prediction(4, 1, 1, Optional.of(800L), Optional.of(80L), Optional.of(BASIS_SUCCESSFUL_RUNS)));
+    }
+
+    @Test
+    void testOrderComesFromEndTime()
+    {
+        // same runs as the q18 case, but the list is oldest first
+        List<HistoryRun> runs = new ArrayList<>(newestFirst(
+                finished(1600, 400),
+                finished(1500, 390),
+                failed("EXCEEDED_GLOBAL_MEMORY_LIMIT", 1900, 900),
+                failed("EXCEEDED_GLOBAL_MEMORY_LIMIT", 1900, 900)));
+        Collections.reverse(runs);
+        Prediction prediction = PredictionRule.predict(runs, GROWTH);
+        assertThat(prediction).isEqualTo(new Prediction(4, 2, 2, Optional.of(1600L), Optional.of(400L), Optional.of(BASIS_SUCCESSFUL_RUNS)));
+    }
+
+    /**
+     * Gives the runs end times one minute apart, the first run being the newest.
+     */
+    private static List<HistoryRun> newestFirst(RunSpec... runs)
+    {
+        ImmutableList.Builder<HistoryRun> result = ImmutableList.builder();
+        for (int i = 0; i < runs.length; i++) {
+            RunSpec run = runs[i];
+            result.add(new HistoryRun(run.queryState(), run.errorCode(), run.peakUserMemoryBytes(), run.peakTaskUserMemoryBytes(), NEWEST_END_TIME.minus(Duration.ofMinutes(i))));
+        }
+        return result.build();
+    }
+
+    private static RunSpec finished(long peakUserMemoryBytes, long peakTaskUserMemoryBytes)
+    {
+        return new RunSpec("FINISHED", Optional.empty(), peakUserMemoryBytes, peakTaskUserMemoryBytes);
+    }
+
+    private static RunSpec failed(String errorCode, long peakUserMemoryBytes, long peakTaskUserMemoryBytes)
+    {
+        return new RunSpec("FAILED", Optional.of(errorCode), peakUserMemoryBytes, peakTaskUserMemoryBytes);
+    }
+
+    private record RunSpec(String queryState, Optional<String> errorCode, long peakUserMemoryBytes, long peakTaskUserMemoryBytes) {}
 }

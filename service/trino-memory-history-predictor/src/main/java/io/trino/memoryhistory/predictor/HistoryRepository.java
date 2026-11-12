@@ -33,7 +33,7 @@ public class HistoryRepository
 {
     private static final String SELECT_RUNS =
             """
-            SELECT query_state, error_code, peak_user_memory_bytes, peak_task_user_memory_bytes
+            SELECT query_state, error_code, peak_user_memory_bytes, peak_task_user_memory_bytes, end_time
             FROM query_history
             WHERE fingerprint = ?
             ORDER BY end_time DESC
@@ -78,7 +78,8 @@ public class HistoryRepository
                             resultSet.getString("query_state"),
                             Optional.ofNullable(resultSet.getString("error_code")),
                             resultSet.getLong("peak_user_memory_bytes"),
-                            resultSet.getLong("peak_task_user_memory_bytes")));
+                            resultSet.getLong("peak_task_user_memory_bytes"),
+                            resultSet.getTimestamp("end_time").toInstant()));
                 }
             }
             return runs.build();

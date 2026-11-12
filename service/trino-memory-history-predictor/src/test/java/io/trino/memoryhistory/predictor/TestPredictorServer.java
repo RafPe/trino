@@ -66,7 +66,8 @@ final class TestPredictorServer
         Instant time = Instant.parse("2026-01-01T00:00:00Z");
         store.insert(row("q1", fingerprint, "FINISHED", Optional.empty(), 2 * GB, time));
         store.insert(row("q2", fingerprint, "FINISHED", Optional.empty(), 3 * GB, time.plusSeconds(10)));
-        store.insert(row("q3", fingerprint, "FAILED", Optional.of("EXCEEDED_LOCAL_MEMORY_LIMIT"), GB, time.plusSeconds(20)));
+        // a memory failure older than the last success is ignored by the prediction rule
+        store.insert(row("q3", fingerprint, "FAILED", Optional.of("EXCEEDED_LOCAL_MEMORY_LIMIT"), 4 * GB, time.minusSeconds(10)));
         store.insert(row("q4", fingerprint, "FAILED", Optional.of("USER_CANCELED"), 50 * GB, time.plusSeconds(30)));
 
         PredictorConfig config = new PredictorConfig(postgres.getJdbcUrl(), Optional.of(postgres.getUsername()), Optional.of(postgres.getPassword()), GB, 2, 6, 1.2, 2.0, 10, 0);

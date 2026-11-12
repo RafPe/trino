@@ -145,9 +145,12 @@ Prediction rule, over the last `HISTORY_RUNS` rows for the fingerprint (newest f
 
 - `S` = rows with `query_state = 'FINISHED'`; `F` = rows whose `error_code` is one of `EXCEEDED_LOCAL_MEMORY_LIMIT`, `EXCEEDED_GLOBAL_MEMORY_LIMIT`, `CLUSTER_OUT_OF_MEMORY`. Other failures are ignored.
 - No rows in `S` or `F` → `known: false`, prediction fields `null`.
-- `maxS` = max peak over `S`; `maxF` = max peak over `F` (a failed run's peak is a *lower bound*).
-- If `S` is empty, or `maxF > maxS`: predicted = `maxF × FAILURE_GROWTH_FACTOR`, basis `"memory_failure_growth"`.
-- Otherwise predicted = `maxS`, basis `"max_of_last_successful_runs"`.
+- `maxS` = max peak over `S`. A failed run's peak is a *lower bound*.
+- `F_recent` = rows in `F` with an `end_time` after the newest row in `S`. When `S` is empty, `F_recent` = `F`.
+- If `S` is empty: predicted = `max peak over F × FAILURE_GROWTH_FACTOR`, basis `"memory_failure_growth"`.
+- If `F_recent` is not empty (the query ran out of memory after its last success): predicted = `max(maxS, max peak over F_recent) × FAILURE_GROWTH_FACTOR`, basis `"memory_failure_growth"`.
+- Otherwise predicted = `maxS`, basis `"max_of_last_successful_runs"`. Memory failures older than the last success are ignored.
+- `runs`, `successfulRuns` and `memoryFailures` count all rows in the window.
 - The same rule applies to `peak_task_user_memory_bytes`.
 - `requiredWorkers = clamp(ceil(predictedPeakUserMemoryBytes × SAFETY_FACTOR / PER_WORKER_MEMORY_BYTES), MIN_WORKERS, MAX_WORKERS)`.
 - Unsupported or unparsable SQL → `{"supported": false, "known": false}`.
