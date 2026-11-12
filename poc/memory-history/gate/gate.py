@@ -200,8 +200,14 @@ def run_query(
         cur = conn.cursor()
         try:
             cur.execute(sql)
-            rows = cur.fetchall()
-            result["rows"] = len(rows)
+            # Count rows in batches; do not keep a large result in client memory.
+            count = 0
+            while True:
+                batch = cur.fetchmany(10000)
+                if not batch:
+                    break
+                count += len(batch)
+            result["rows"] = count
             result["query_id"] = cur.query_id
         except trino.exceptions.TrinoQueryError as e:
             result["query_id"] = e.query_id

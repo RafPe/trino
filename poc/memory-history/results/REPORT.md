@@ -1,6 +1,6 @@
 # Memory-history PoC report
 
-Generated 2026-11-12T14:41:39+00:00 from 117 runs. Actual values from: runs.jsonl (Trino REST API).
+Generated 2026-11-12T14:49:53+00:00 from 117 runs. Actual values from: runs.jsonl (Trino REST API).
 
 ## Summary per pass
 
@@ -35,7 +35,7 @@ These ratios are **in-sample**: every query in the predict passes had already ru
 
 ### Leave-one-variant-out
 
-For each FINISHED run with a peak ≥ 100 MB, predict from the runs of the *other* literal variants of the same template only (maximum of their peaks). This is what a query with new literals would get.
+For each FINISHED run with a peak ≥ 100 MB, predict from the runs of the *other* literal variants of the same template only (maximum of their peaks). This is a retrospective cross-check, not a replay of the predictor: it uses successful runs from all passes (also later ones) and ignores the failure-growth rule.
 
 - n = 45, under-predicted: 7
 - median: 1.04, p90: 1.08, min: 0.96, max: 1.17

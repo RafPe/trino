@@ -41,6 +41,24 @@ load_image() {
     docker save --platform "${PLATFORM}" "${image}" |
         docker exec -i "${NODE}" ctr -n k8s.io images import --digests --snapshotter=overlayfs - >/dev/null
     docker exec "${NODE}" ctr -n k8s.io images label "${ref}" "mhpoc.source-id=${id}" >/dev/null
+    RELOADED+=("${image}")
+}
+# Images (re)loaded in this run. A changed image keeps its tag, so the pod specs do not
+# change and Kubernetes would keep the old pods; restart_if_reloaded forces a rollout.
+RELOADED=()
+restart_if_reloaded() {
+    local image="$1"
+    shift
+    local loaded
+    for loaded in "${RELOADED[@]:-}"; do
+        if [[ "${loaded}" == "${image}" ]]; then
+            log "${image} changed: restarting $*"
+            kc -n "${NAMESPACE}" rollout restart "$@" >/dev/null
+            local target
+            for target in "$@"; do kc -n "${NAMESPACE}" rollout status "${target}" --timeout 5m >/dev/null; done
+            return
+        fi
+    done
 }
 
 images=("${TRINO_IMAGE}" "${POSTGRES_IMAGE}")
@@ -68,6 +86,7 @@ if [[ -n "${PREDICTOR_IMAGE}" ]]; then
     kc -n "${NAMESPACE}" delete deployment predictor-stub --ignore-not-found
     sed "s|\${PREDICTOR_IMAGE}|${PREDICTOR_IMAGE}|" "${K8S_DIR}/manifests/predictor.yaml" | kc -n "${NAMESPACE}" apply -f -
     kc -n "${NAMESPACE}" rollout status deployment/predictor --timeout 3m
+    restart_if_reloaded "${PREDICTOR_IMAGE}" deployment/predictor
 else
     kc -n "${NAMESPACE}" delete deployment predictor --ignore-not-found
     kc -n "${NAMESPACE}" apply -f "${K8S_DIR}/manifests/predictor-stub.yaml"
@@ -83,6 +102,7 @@ hm upgrade --install trino trino --repo "${TRINO_CHART_REPO}" --version "${TRINO
     --namespace "${NAMESPACE}" "${values[@]}" \
     --set image.repository="${TRINO_IMAGE_REPO}" --set image.tag="${TRINO_IMAGE_TAG}" \
     --wait --timeout 10m
+restart_if_reloaded "${TRINO_IMAGE}" deployment/trino-coordinator deployment/trino-worker
 
 log "waiting for 2 active workers"
 for _ in $(seq 1 60); do

@@ -189,7 +189,8 @@ def build_report(runs, history, source):
         out("### Leave-one-variant-out")
         out("")
         out("For each FINISHED run with a peak ≥ 100 MB, predict from the runs of the *other* literal variants of the "
-            "same template only (maximum of their peaks). This is what a query with new literals would get.")
+            "same template only (maximum of their peaks). This is a retrospective cross-check, not a replay of the "
+            "predictor: it uses successful runs from all passes (also later ones) and ignores the failure-growth rule.")
         out("")
         by_template = defaultdict(lambda: defaultdict(list))
         for r in runs:
