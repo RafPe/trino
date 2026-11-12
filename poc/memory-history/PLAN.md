@@ -160,6 +160,8 @@ Prediction rule, over the last `HISTORY_RUNS` rows for the fingerprint (newest f
 
 Implementation: JDK `com.sun.net.httpserver.HttpServer`, plain JDBC, Jackson for JSON. No framework.
 
+Added after review: database errors return `503` (connect timeout 3 s, socket and statement timeout 10 s); at most 16 `/v1/predict` requests run at once, extra ones get `503`.
+
 ## Contract 4: gate and scaler (Python 3, `trino` client package)
 
 `gate.py --server http://localhost:8080 --predictor http://localhost:8090 --catalog tpcds --schema sf10 [--user poc] [--no-gate] [--tag k=v ...] (-f query.sql | -e "sql")`

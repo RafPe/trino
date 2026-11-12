@@ -21,7 +21,7 @@ client ──▶ gate.py ──(1) POST /v1/predict ─────────�
 
 | Part | Where | What it does |
 |---|---|---|
-| Fingerprint | `plugin/trino-memory-history` (`QueryFingerprint`) | SQL → hash. Literals become `?`, case/whitespace/comments ignored, tables included. |
+| Fingerprint | `lib/trino-memory-history-fingerprint` (`QueryFingerprint`) | SQL → hash. Literals become `?`, case/whitespace/comments ignored, tables included. |
 | Event listener | `plugin/trino-memory-history` | On every completed query: writes fingerprint, peak memory, state and error code to PostgreSQL. |
 | Predictor | `service/trino-memory-history-predictor` | `POST /v1/predict` → predicted peak and required workers. Holds reservations. `GET /v1/required-workers` for the scaler. |
 | Gate | `gate/gate.py` | Client-side. Asks the predictor, reserves, submits the query with `required_workers_count` so Trino itself waits. |
@@ -47,10 +47,15 @@ docker/build-images.sh
 # -> trino-memory-history-predictor:poc
 ```
 
+The script builds the three PoC modules and the Trino modules they depend on (`-am`), so the first
+run on a fresh checkout takes several minutes. It was not tested with an empty Maven cache.
+
 Unit tests (optional, need Docker for Testcontainers):
 
 ```bash
-(cd ../.. && mvnd -pl plugin/trino-memory-history,service/trino-memory-history-predictor test -Dair.check.skip-all=true)
+(cd ../.. && mvnd -pl lib/trino-memory-history-fingerprint,plugin/trino-memory-history,service/trino-memory-history-predictor -am test \
+    -Dair.check.skip-all=true -Dsurefire.failIfNoSpecifiedTests=false \
+    -Dtest='TestQueryFingerprint,TestMemoryHistory*,TestPrediction*,TestPredictor*,TestReservations*')
 ```
 
 ## 2. Python environment
@@ -149,6 +154,12 @@ Compose stack, real plugin and predictor, 117 workload runs. Details: [results/R
 | Variants 1 and 2 through the gate | predicted 3.6 GB from the successful run, actual 3.5 GB; no wait, finished in 12–13 s |
 | After the last query | reservation released, required workers back to 2 |
 
+## If PostgreSQL or the predictor is down
+
+- The listener never fails a query: inserts run on a background thread with 10 s timeouts, at most 1,000 records wait in memory, and extra records are dropped and counted. If the history table disappears, it is created again.
+- The predictor answers `503` within about 3 s when it cannot reach PostgreSQL, and at most 16 predictions run at once.
+- The gate treats any predictor error as "unknown query" and submits the query unchanged.
+
 ## Known limits
 
 - **Only repeated queries.** A new query shape runs unchanged and can fail; its failure teaches the next run.
@@ -165,7 +176,8 @@ Compose stack, real plugin and predictor, 117 workload runs. Details: [results/R
 ## Layout
 
 ```
-plugin/trino-memory-history/               fingerprint, event listener, PostgreSQL store (Java)
+lib/trino-memory-history-fingerprint/      SQL fingerprint, shared by the plugin and the predictor (Java)
+plugin/trino-memory-history/               event listener, PostgreSQL store (Java)
 service/trino-memory-history-predictor/    predictor HTTP service (Java)
 poc/memory-history/
   docker/      image builds
