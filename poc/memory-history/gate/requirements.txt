@@ -1,0 +1,4 @@
+trino>=0.330
+requests>=2.31
+pyyaml>=6.0
+psycopg[binary]>=3.2
