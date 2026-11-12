@@ -13,7 +13,7 @@
  */
 package io.trino.memoryhistory.predictor;
 
-import io.trino.plugin.memoryhistory.QueryFingerprint;
+import io.trino.memoryhistory.fingerprint.QueryFingerprint;
 
 import java.sql.SQLException;
 import java.util.LinkedHashMap;

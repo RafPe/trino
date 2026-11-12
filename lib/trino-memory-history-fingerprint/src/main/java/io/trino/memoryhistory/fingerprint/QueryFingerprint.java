@@ -11,7 +11,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.trino.plugin.memoryhistory;
+package io.trino.memoryhistory.fingerprint;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.hash.Hashing;
@@ -24,11 +24,14 @@ import io.trino.sql.tree.Insert;
 import io.trino.sql.tree.Query;
 import io.trino.sql.tree.Statement;
 import io.trino.sql.tree.Table;
+import io.trino.sql.tree.With;
 import io.trino.sql.tree.WithQuery;
 import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.Token;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
@@ -49,6 +52,26 @@ public record QueryFingerprint(String hash, String normalizedSql, List<String> t
     private static final SqlParser SQL_PARSER = new SqlParser();
     private static final String PLACEHOLDER = "?";
     private static final String UNKNOWN = "?";
+    // Single-keyword prefixes of typed literals, for example DATE '2020-01-01' (lower case, as normalized)
+    private static final Set<String> TYPED_LITERAL_PREFIXES = Set.of(
+            "date",
+            "time",
+            "timestamp",
+            "decimal",
+            "real",
+            "double",
+            "bigint",
+            "integer",
+            "int",
+            "smallint",
+            "tinyint",
+            "varchar",
+            "char",
+            "varbinary",
+            "json",
+            "uuid",
+            "ipaddress");
+    private static final Set<String> INTERVAL_FIELDS = Set.of("year", "month", "day", "hour", "minute", "second");
 
     public QueryFingerprint
     {
@@ -96,7 +119,6 @@ public record QueryFingerprint(String hash, String normalizedSql, List<String> t
         String defaultCatalog = catalog.map(value -> value.toLowerCase(ENGLISH)).orElse(UNKNOWN);
         String defaultSchema = schema.map(value -> value.toLowerCase(ENGLISH)).orElse(UNKNOWN);
         return collector.tables.stream()
-                .filter(parts -> parts.size() != 1 || !collector.cteNames.contains(parts.getFirst()))
                 .map(parts -> switch (parts.size()) {
                     case 1 -> String.join(".", defaultCatalog, defaultSchema, parts.getFirst());
                     case 2 -> String.join(".", defaultCatalog, parts.get(0), parts.get(1));
@@ -140,7 +162,7 @@ public record QueryFingerprint(String hash, String normalizedSql, List<String> t
         return String.join(" ", collapseInLists(tokens));
     }
 
-    // in ( ? , ? , ... ) -> in ( ? )
+    // in ( ? , - ? , date ? , ... ) -> in ( ? )
     private static List<String> collapseInLists(List<String> tokens)
     {
         List<String> result = new ArrayList<>(tokens.size());
@@ -161,7 +183,7 @@ public record QueryFingerprint(String hash, String normalizedSql, List<String> t
 
     /**
      * Returns the index of the closing parenthesis when an IN list made only of
-     * placeholders starts at {@code start}, or -1 otherwise.
+     * literal elements (see {@link #literalElementEnd}) starts at {@code start}, or -1 otherwise.
      */
     private static int placeholderInListEnd(List<String> tokens, int start)
     {
@@ -169,8 +191,9 @@ public record QueryFingerprint(String hash, String normalizedSql, List<String> t
             return -1;
         }
         int index = start + 2;
-        while (index + 1 < tokens.size()) {
-            if (!tokens.get(index).equals(PLACEHOLDER)) {
+        while (index < tokens.size()) {
+            index = literalElementEnd(tokens, index);
+            if (index < 0 || index + 1 >= tokens.size()) {
                 return -1;
             }
             String next = tokens.get(index + 1);
@@ -185,26 +208,96 @@ public record QueryFingerprint(String hash, String normalizedSql, List<String> t
         return -1;
     }
 
+    /**
+     * Matches one literal IN-list element starting at {@code start}:
+     * {@code [+|-] [type] ?}, where {@code type} is a single-keyword typed-literal prefix,
+     * or {@code interval [+|-] ? field [to field]}. Returns the index of the element's
+     * last token, or -1 when the tokens at {@code start} are not such an element.
+     */
+    private static int literalElementEnd(List<String> tokens, int start)
+    {
+        int index = start;
+        if (index < tokens.size() && (tokens.get(index).equals("-") || tokens.get(index).equals("+"))) {
+            index++;
+        }
+        if (index < tokens.size() && tokens.get(index).equals("interval")) {
+            index++;
+            if (index < tokens.size() && (tokens.get(index).equals("-") || tokens.get(index).equals("+"))) {
+                index++;
+            }
+            if (index + 1 >= tokens.size() || !tokens.get(index).equals(PLACEHOLDER) || !INTERVAL_FIELDS.contains(tokens.get(index + 1))) {
+                return -1;
+            }
+            index++;
+            if (index + 2 < tokens.size() && tokens.get(index + 1).equals("to") && INTERVAL_FIELDS.contains(tokens.get(index + 2))) {
+                index += 2;
+            }
+            return index;
+        }
+        if (index < tokens.size() && TYPED_LITERAL_PREFIXES.contains(tokens.get(index))) {
+            index++;
+        }
+        if (index < tokens.size() && tokens.get(index).equals(PLACEHOLDER)) {
+            return index;
+        }
+        return -1;
+    }
+
+    /**
+     * Collects table names. A single-part name is a CTE reference, not a table, when a CTE
+     * of that name is visible: CTEs of a {@code WITH} are visible in the query body (and its
+     * subqueries) and in the definitions of later CTEs of the same {@code WITH}, not in their
+     * own definition or earlier ones. Simplification for {@code WITH RECURSIVE}: a CTE is
+     * also visible in its own definition.
+     */
     private static class TableCollector
             extends DefaultTraversalVisitor<Void>
     {
         private final List<List<String>> tables = new ArrayList<>();
-        private final Set<String> cteNames = new HashSet<>();
+        private final Deque<Set<String>> cteScopes = new ArrayDeque<>();
+
+        @Override
+        protected Void visitQuery(Query node, Void context)
+        {
+            Optional<With> with = node.getWith();
+            if (with.isEmpty()) {
+                return super.visitQuery(node, context);
+            }
+            // filled by visitWith as the CTE definitions are visited
+            cteScopes.push(new HashSet<>());
+            try {
+                return super.visitQuery(node, context);
+            }
+            finally {
+                cteScopes.pop();
+            }
+        }
+
+        @Override
+        protected Void visitWith(With node, Void context)
+        {
+            Set<String> visible = cteScopes.element();
+            for (WithQuery query : node.getQueries()) {
+                String name = query.getName().getValue().toLowerCase(ENGLISH);
+                if (node.isRecursive()) {
+                    visible.add(name);
+                }
+                process(query, context);
+                visible.add(name);
+            }
+            return null;
+        }
 
         @Override
         protected Void visitTable(Table node, Void context)
         {
-            tables.add(node.getName().getOriginalParts().stream()
+            List<String> parts = node.getName().getOriginalParts().stream()
                     .map(identifier -> identifier.getValue().toLowerCase(ENGLISH))
-                    .collect(toImmutableList()));
+                    .collect(toImmutableList());
+            if (parts.size() != 1 || cteScopes.stream().noneMatch(names -> names.contains(parts.getFirst()))) {
+                tables.add(parts);
+            }
             return super.visitTable(node, context);
-        }
-
-        @Override
-        protected Void visitWithQuery(WithQuery node, Void context)
-        {
-            cteNames.add(node.getName().getValue().toLowerCase(ENGLISH));
-            return super.visitWithQuery(node, context);
         }
 
         @Override

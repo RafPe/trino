@@ -73,6 +73,13 @@ public class QueryHistoryStore
             ON CONFLICT (query_id) DO NOTHING
             """;
 
+    // PostgreSQL JDBC timeouts in seconds, so a hung database cannot block the insert thread forever.
+    // Parameters in the JDBC URL take precedence.
+    private static final String TIMEOUT_SECONDS = "10";
+    private static final int QUERY_TIMEOUT_SECONDS = 10;
+    // PostgreSQL SQLSTATE undefined_table
+    private static final String UNDEFINED_TABLE = "42P01";
+
     private final String url;
     private final Properties properties;
 
@@ -81,6 +88,9 @@ public class QueryHistoryStore
     {
         this.url = requireNonNull(config.getUrl(), "url is null");
         this.properties = new Properties();
+        properties.setProperty("connectTimeout", TIMEOUT_SECONDS);
+        properties.setProperty("socketTimeout", TIMEOUT_SECONDS);
+        properties.setProperty("loginTimeout", TIMEOUT_SECONDS);
         config.getUser().ifPresent(user -> properties.setProperty("user", user));
         config.getPassword().ifPresent(password -> properties.setProperty("password", password));
     }
@@ -90,6 +100,7 @@ public class QueryHistoryStore
     {
         try (Connection connection = connect();
                 Statement statement = connection.createStatement()) {
+            statement.setQueryTimeout(QUERY_TIMEOUT_SECONDS);
             statement.execute(CREATE_TABLE);
             statement.execute(CREATE_INDEX);
         }
@@ -100,6 +111,7 @@ public class QueryHistoryStore
     {
         try (Connection connection = connect();
                 PreparedStatement statement = connection.prepareStatement(INSERT)) {
+            statement.setQueryTimeout(QUERY_TIMEOUT_SECONDS);
             int index = 1;
             statement.setString(index++, record.queryId());
             statement.setString(index++, record.fingerprint());
@@ -124,6 +136,19 @@ public class QueryHistoryStore
             statement.setObject(index, OffsetDateTime.ofInstant(record.endTime(), UTC));
             statement.executeUpdate();
         }
+    }
+
+    /**
+     * Returns true when the exception, or one it wraps, reports that the table does not exist.
+     */
+    public static boolean isUndefinedTable(SQLException exception)
+    {
+        for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
+            if (cause instanceof SQLException sqlException && UNDEFINED_TABLE.equals(sqlException.getSQLState())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Connection connect()

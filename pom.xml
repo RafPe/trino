@@ -55,6 +55,7 @@
         <module>lib/trino-json</module>
         <module>lib/trino-matching</module>
         <module>lib/trino-memory-context</module>
+        <module>lib/trino-memory-history-fingerprint</module>
         <module>lib/trino-metastore</module>
         <module>lib/trino-orc</module>
         <module>lib/trino-parquet</module>
@@ -1210,6 +1211,18 @@
             <dependency>
                 <groupId>io.trino</groupId>
                 <artifactId>trino-memory-context</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>io.trino</groupId>
+                <artifactId>trino-memory-history</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>io.trino</groupId>
+                <artifactId>trino-memory-history-fingerprint</artifactId>
                 <version>${project.version}</version>
             </dependency>
 

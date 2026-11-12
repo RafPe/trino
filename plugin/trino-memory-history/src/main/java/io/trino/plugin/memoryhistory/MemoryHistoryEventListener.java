@@ -20,6 +20,7 @@ import com.google.inject.Inject;
 import io.airlift.json.JsonCodec;
 import io.airlift.json.JsonCodecFactory;
 import io.airlift.log.Logger;
+import io.trino.memoryhistory.fingerprint.QueryFingerprint;
 import io.trino.spi.eventlistener.EventListener;
 import io.trino.spi.eventlistener.QueryCompletedEvent;
 import io.trino.spi.eventlistener.QueryContext;
@@ -27,32 +28,44 @@ import io.trino.spi.eventlistener.QueryFailureInfo;
 import io.trino.spi.eventlistener.QueryMetadata;
 import io.trino.spi.eventlistener.QueryStatistics;
 
+import java.sql.SQLException;
+import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
+import java.util.SortedMap;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static java.util.concurrent.TimeUnit.MINUTES;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
 /**
  * Records the fingerprint and peak memory of every completed query in PostgreSQL.
- * Inserts run on a single background thread. The listener never throws.
+ * The calling thread only copies the needed event fields and enqueues them; parsing,
+ * fingerprinting and the insert run on a single background thread. The listener never throws.
  */
 public class MemoryHistoryEventListener
         implements EventListener
 {
     private static final Logger log = Logger.get(MemoryHistoryEventListener.class);
     private static final JsonCodec<Map<String, String>> SESSION_PROPERTIES_CODEC = new JsonCodecFactory().mapJsonCodec(String.class, String.class);
-    private static final int QUEUE_SIZE = 10_000;
+    private static final int QUEUE_SIZE = 1_000;
+    @VisibleForTesting
+    static final int MAX_TEXT_LENGTH = 100_000;
+    private static final long DROP_LOG_INTERVAL_NANOS = MINUTES.toNanos(1);
 
     private final QueryHistoryStore store;
     private final ThreadPoolExecutor executor;
     private final AtomicLong droppedRecords = new AtomicLong();
     private final AtomicLong failedInserts = new AtomicLong();
+    private final AtomicLong lastDropLogNanos = new AtomicLong(System.nanoTime() - DROP_LOG_INTERVAL_NANOS);
     private volatile boolean tableCreated;
 
     @Inject
@@ -66,10 +79,7 @@ public class MemoryHistoryEventListener
                 MILLISECONDS,
                 new ArrayBlockingQueue<>(QUEUE_SIZE),
                 new ThreadFactoryBuilder().setNameFormat("memory-history-%s").setDaemon(true).build(),
-                (_, _) -> {
-                    long dropped = droppedRecords.incrementAndGet();
-                    log.warn("Memory history queue is full, dropped %s records so far", dropped);
-                });
+                (_, _) -> recordDrop());
         executor.execute(this::ensureTableCreated);
     }
 
@@ -77,11 +87,8 @@ public class MemoryHistoryEventListener
     public void queryCompleted(QueryCompletedEvent event)
     {
         try {
-            Optional<QueryHistoryRecord> record = toRecord(event);
-            if (record.isEmpty()) {
-                return;
-            }
-            executor.execute(() -> insert(record.get()));
+            CompletedQuery query = CompletedQuery.from(event);
+            executor.execute(() -> insert(query));
         }
         catch (RuntimeException e) {
             log.error(e, "Failed to record query %s", event.getMetadata().getQueryId());
@@ -115,29 +122,58 @@ public class MemoryHistoryEventListener
         return failedInserts.get();
     }
 
+    /**
+     * Waits until every task queued before this call has finished. The executor has a single
+     * thread and a FIFO queue, so a sentinel task finishes only after all earlier tasks.
+     */
     @VisibleForTesting
     boolean awaitIdle(long timeoutMillis)
             throws InterruptedException
     {
-        long deadline = System.currentTimeMillis() + timeoutMillis;
-        while (executor.getActiveCount() > 0 || !executor.getQueue().isEmpty()) {
-            if (System.currentTimeMillis() > deadline) {
-                return false;
-            }
-            Thread.sleep(10);
+        try {
+            executor.submit(() -> {}).get(timeoutMillis, MILLISECONDS);
+            return true;
         }
-        return true;
+        catch (ExecutionException | TimeoutException | RejectedExecutionException e) {
+            return false;
+        }
     }
 
-    private void insert(QueryHistoryRecord record)
+    private void recordDrop()
+    {
+        long dropped = droppedRecords.incrementAndGet();
+        long now = System.nanoTime();
+        long last = lastDropLogNanos.get();
+        if (now - last >= DROP_LOG_INTERVAL_NANOS && lastDropLogNanos.compareAndSet(last, now)) {
+            log.warn("Memory history queue is full, dropped %s records so far", dropped);
+        }
+    }
+
+    private void insert(CompletedQuery query)
     {
         try {
+            Optional<QueryHistoryRecord> record = query.toRecord();
+            if (record.isEmpty()) {
+                return;
+            }
             ensureTableCreated();
-            store.insert(record);
+            try {
+                store.insert(record.get());
+            }
+            catch (SQLException e) {
+                if (!QueryHistoryStore.isUndefinedTable(e)) {
+                    throw e;
+                }
+                // the database was replaced or the table dropped: create the table again and retry once
+                log.warn("Table query_history is missing, creating it again");
+                tableCreated = false;
+                ensureTableCreated();
+                store.insert(record.get());
+            }
         }
         catch (Exception e) {
             failedInserts.incrementAndGet();
-            log.error(e, "Failed to store memory history of query %s", record.queryId());
+            log.error(e, "Failed to store memory history of query %s", query.queryId());
         }
     }
 
@@ -156,40 +192,104 @@ public class MemoryHistoryEventListener
     }
 
     @VisibleForTesting
-    static Optional<QueryHistoryRecord> toRecord(QueryCompletedEvent event)
+    static String truncate(String value)
     {
-        QueryMetadata metadata = event.getMetadata();
-        QueryContext context = event.getContext();
-        QueryStatistics statistics = event.getStatistics();
+        if (value.length() <= MAX_TEXT_LENGTH) {
+            return value;
+        }
+        int end = MAX_TEXT_LENGTH;
+        if (Character.isHighSurrogate(value.charAt(end - 1))) {
+            end--;
+        }
+        return value.substring(0, end);
+    }
 
-        String sql = metadata.getPreparedQuery().orElse(metadata.getQuery());
-        Optional<QueryFingerprint> fingerprint = QueryFingerprint.compute(sql, context.getCatalog(), context.getSchema());
-        if (fingerprint.isEmpty()) {
-            return Optional.empty();
+    /**
+     * The event fields the listener stores. Built on the calling thread with plain getters
+     * only, so the queue does not keep the whole event (plan, operator statistics) alive.
+     */
+    private record CompletedQuery(
+            String queryId,
+            String sql,
+            Optional<String> catalog,
+            Optional<String> schema,
+            String queryState,
+            Optional<String> errorCode,
+            Optional<String> errorType,
+            long peakUserMemoryBytes,
+            long peakTaskUserMemoryBytes,
+            long peakTaskTotalMemoryBytes,
+            long physicalInputRows,
+            long physicalInputBytes,
+            long wallTimeMillis,
+            long cpuTimeMillis,
+            long queuedTimeMillis,
+            String userName,
+            Optional<String> source,
+            String clientTags,
+            SortedMap<String, String> sessionProperties,
+            Instant createTime,
+            Instant endTime)
+    {
+        static CompletedQuery from(QueryCompletedEvent event)
+        {
+            QueryMetadata metadata = event.getMetadata();
+            QueryContext context = event.getContext();
+            QueryStatistics statistics = event.getStatistics();
+            Optional<QueryFailureInfo> failure = event.getFailureInfo();
+            return new CompletedQuery(
+                    metadata.getQueryId(),
+                    metadata.getPreparedQuery().orElse(metadata.getQuery()),
+                    context.getCatalog(),
+                    context.getSchema(),
+                    metadata.getQueryState(),
+                    failure.map(info -> info.getErrorCode().getName()),
+                    failure.map(info -> info.getErrorCode().getType().name()),
+                    statistics.getPeakUserMemoryBytes(),
+                    statistics.getPeakTaskUserMemory(),
+                    statistics.getPeakTaskTotalMemory(),
+                    statistics.getPhysicalInputRows(),
+                    statistics.getPhysicalInputBytes(),
+                    statistics.getWallTime().toMillis(),
+                    statistics.getCpuTime().toMillis(),
+                    statistics.getQueuedTime().toMillis(),
+                    context.getUser(),
+                    context.getSource(),
+                    String.join(",", context.getClientTags().stream().sorted().collect(toImmutableList())),
+                    ImmutableSortedMap.copyOf(context.getSessionProperties()),
+                    event.getCreateTime(),
+                    event.getEndTime());
         }
 
-        Optional<QueryFailureInfo> failure = event.getFailureInfo();
-        return Optional.of(new QueryHistoryRecord(
-                metadata.getQueryId(),
-                fingerprint.get().hash(),
-                fingerprint.get().normalizedSql(),
-                String.join(",", fingerprint.get().tables()),
-                metadata.getQueryState(),
-                failure.map(info -> info.getErrorCode().getName()),
-                failure.map(info -> info.getErrorCode().getType().name()),
-                statistics.getPeakUserMemoryBytes(),
-                statistics.getPeakTaskUserMemory(),
-                statistics.getPeakTaskTotalMemory(),
-                statistics.getPhysicalInputRows(),
-                statistics.getPhysicalInputBytes(),
-                statistics.getWallTime().toMillis(),
-                statistics.getCpuTime().toMillis(),
-                statistics.getQueuedTime().toMillis(),
-                context.getUser(),
-                context.getSource(),
-                String.join(",", context.getClientTags().stream().sorted().collect(toImmutableList())),
-                SESSION_PROPERTIES_CODEC.toJson(ImmutableSortedMap.copyOf(context.getSessionProperties())),
-                event.getCreateTime(),
-                event.getEndTime()));
+        /**
+         * Fingerprints the SQL. Empty when the statement has no fingerprint.
+         * The hash covers the full normalized SQL; only the stored text is truncated.
+         */
+        Optional<QueryHistoryRecord> toRecord()
+        {
+            return QueryFingerprint.compute(sql, catalog, schema)
+                    .map(fingerprint -> new QueryHistoryRecord(
+                            queryId,
+                            fingerprint.hash(),
+                            truncate(fingerprint.normalizedSql()),
+                            String.join(",", fingerprint.tables()),
+                            queryState,
+                            errorCode,
+                            errorType,
+                            peakUserMemoryBytes,
+                            peakTaskUserMemoryBytes,
+                            peakTaskTotalMemoryBytes,
+                            physicalInputRows,
+                            physicalInputBytes,
+                            wallTimeMillis,
+                            cpuTimeMillis,
+                            queuedTimeMillis,
+                            userName,
+                            source,
+                            clientTags,
+                            truncate(SESSION_PROPERTIES_CODEC.toJson(sessionProperties)),
+                            createTime,
+                            endTime));
+        }
     }
 }

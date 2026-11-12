@@ -11,7 +11,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.trino.plugin.memoryhistory;
+package io.trino.memoryhistory.fingerprint;
 
 import com.google.common.hash.Hashing;
 import org.junit.jupiter.api.Test;
@@ -91,6 +91,33 @@ final class TestQueryFingerprint
     }
 
     @Test
+    void testInListWithSignedAndTypedLiterals()
+    {
+        QueryFingerprint signed = fingerprint("SELECT * FROM orders WHERE orderkey IN (-1, -2, -3)");
+        assertThat(signed.normalizedSql()).isEqualTo("select * from orders where orderkey in ( ? )");
+        assertThat(fingerprint("SELECT * FROM orders WHERE orderkey IN (-5, +6)").hash()).isEqualTo(signed.hash());
+        assertThat(fingerprint("SELECT * FROM orders WHERE orderkey IN (7, -8, 9)").hash()).isEqualTo(signed.hash());
+
+        QueryFingerprint dates = fingerprint("SELECT * FROM orders WHERE orderdate IN (DATE '1995-01-01', DATE '1995-01-02')");
+        assertThat(dates.normalizedSql()).isEqualTo("select * from orders where orderdate in ( ? )");
+        assertThat(fingerprint("SELECT * FROM orders WHERE orderdate IN (DATE '1996-03-04')").hash()).isEqualTo(dates.hash());
+        assertThat(fingerprint("SELECT * FROM orders WHERE x IN (TIMESTAMP '2020-01-01 00:00:00', decimal '1.5', -DOUBLE '2.5')").normalizedSql())
+                .isEqualTo("select * from orders where x in ( ? )");
+        assertThat(fingerprint("SELECT * FROM orders WHERE x IN (INTERVAL '1' DAY, INTERVAL -'2' HOUR, INTERVAL '1-2' YEAR TO MONTH)").normalizedSql())
+                .isEqualTo("select * from orders where x in ( ? )");
+
+        // only IN lists are collapsed: not function arguments, not VALUES rows, not expressions
+        assertThat(fingerprint("SELECT * FROM orders WHERE orderkey IN (1 - 2, 3)").normalizedSql())
+                .isEqualTo("select * from orders where orderkey in ( ? - ? , ? )");
+        assertThat(fingerprint("SELECT * FROM orders WHERE orderkey IN (-custkey, 1)").normalizedSql())
+                .isEqualTo("select * from orders where orderkey in ( - custkey , ? )");
+        assertThat(fingerprint("SELECT greatest(-1, -2, DATE '2020-01-01') FROM orders").normalizedSql())
+                .isEqualTo("select greatest ( - ? , - ? , date ? ) from orders");
+        assertThat(fingerprint("SELECT * FROM (VALUES (-1, -2), (3, 4)) t(a, b) WHERE a IN (1, 2)").normalizedSql())
+                .isEqualTo("select * from ( values ( - ? , - ? ) , ( ? , ? ) ) t ( a , b ) where a in ( ? )");
+    }
+
+    @Test
     void testLimitValueKept()
     {
         QueryFingerprint first = fingerprint("SELECT * FROM orders WHERE orderkey > 1 LIMIT 10");
@@ -104,6 +131,41 @@ final class TestQueryFingerprint
     {
         QueryFingerprint fingerprint = fingerprint("WITH big AS (SELECT * FROM orders WHERE totalprice > 100) SELECT count(*) FROM big JOIN tpch.sf1.customer c ON big.custkey = c.custkey");
         assertThat(fingerprint.tables()).containsExactly("tpch.sf1.customer", "tpch.tiny.orders");
+
+        // a CTE is visible in subqueries of the query that defines it
+        assertThat(fingerprint("WITH big AS (SELECT * FROM orders) SELECT * FROM customer WHERE custkey IN (SELECT custkey FROM big)").tables())
+                .containsExactly("tpch.tiny.customer", "tpch.tiny.orders");
+        // a CTE name is visible in the definitions of later CTEs of the same WITH
+        assertThat(fingerprint("WITH a AS (SELECT * FROM orders), b AS (SELECT * FROM a) SELECT * FROM b").tables())
+                .containsExactly("tpch.tiny.orders");
+        // a recursive CTE is visible in its own definition
+        assertThat(fingerprint("WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 3) SELECT * FROM r JOIN orders ON n = orderkey").tables())
+                .containsExactly("tpch.tiny.orders");
+        // a qualified name is always a table
+        assertThat(fingerprint("WITH orders AS (SELECT * FROM tpch.sf1.orders) SELECT * FROM orders JOIN tiny.orders o USING (orderkey)").tables())
+                .containsExactly("tpch.sf1.orders", "tpch.tiny.orders");
+    }
+
+    @Test
+    void testCteNameOutsideItsScopeIsTable()
+    {
+        // a CTE is not visible in its own definition: the inner "orders" is the real table
+        QueryFingerprint tiny = fingerprint("WITH orders AS (SELECT * FROM orders) SELECT count(*) FROM orders");
+        assertThat(tiny.tables()).containsExactly("tpch.tiny.orders");
+        QueryFingerprint sf5 = QueryFingerprint.compute("WITH orders AS (SELECT * FROM orders) SELECT count(*) FROM orders", CATALOG, Optional.of("sf5")).orElseThrow();
+        assertThat(sf5.tables()).containsExactly("tpch.sf5.orders");
+        assertThat(sf5.hash()).isNotEqualTo(tiny.hash());
+        // nor in the definitions of earlier CTEs of the same WITH
+        assertThat(fingerprint("WITH a AS (SELECT * FROM b), b AS (SELECT * FROM orders) SELECT * FROM a, b").tables())
+                .containsExactly("tpch.tiny.b", "tpch.tiny.orders");
+        // "big" is a CTE only inside the subquery; the outer "big" is a real table
+        assertThat(fingerprint("SELECT * FROM big WHERE EXISTS (WITH big AS (SELECT * FROM orders) SELECT * FROM big)").tables())
+                .containsExactly("tpch.tiny.big", "tpch.tiny.orders");
+        assertThat(fingerprint("SELECT * FROM (WITH x AS (SELECT * FROM orders) SELECT * FROM x) JOIN x USING (orderkey)").tables())
+                .containsExactly("tpch.tiny.orders", "tpch.tiny.x");
+        // the INSERT target is outside the query, so a CTE of the query does not hide it
+        assertThat(fingerprint("INSERT INTO t WITH t AS (SELECT * FROM orders) SELECT * FROM t").tables())
+                .containsExactly("tpch.tiny.orders", "tpch.tiny.t");
     }
 
     @Test

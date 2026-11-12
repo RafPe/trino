@@ -31,8 +31,7 @@
 
         <dependency>
             <groupId>io.trino</groupId>
-            <artifactId>trino-memory-history</artifactId>
-            <version>${project.version}</version>
+            <artifactId>trino-memory-history-fingerprint</artifactId>
         </dependency>
 
         <dependency>
@@ -44,6 +43,12 @@
         <dependency>
             <groupId>io.airlift</groupId>
             <artifactId>junit-extensions</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.trino</groupId>
+            <artifactId>trino-memory-history</artifactId>
             <scope>test</scope>
         </dependency>
 

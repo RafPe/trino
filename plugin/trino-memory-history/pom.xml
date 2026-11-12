@@ -51,22 +51,12 @@
 
         <dependency>
             <groupId>io.trino</groupId>
-            <artifactId>trino-grammar</artifactId>
-        </dependency>
-
-        <dependency>
-            <groupId>io.trino</groupId>
-            <artifactId>trino-parser</artifactId>
+            <artifactId>trino-memory-history-fingerprint</artifactId>
         </dependency>
 
         <dependency>
             <groupId>jakarta.validation</groupId>
             <artifactId>jakarta.validation-api</artifactId>
-        </dependency>
-
-        <dependency>
-            <groupId>org.antlr</groupId>
-            <artifactId>antlr4-runtime</artifactId>
         </dependency>
 
         <dependency>

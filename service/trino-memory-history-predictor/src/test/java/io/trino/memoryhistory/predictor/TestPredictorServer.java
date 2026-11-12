@@ -15,8 +15,8 @@ package io.trino.memoryhistory.predictor;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.trino.memoryhistory.fingerprint.QueryFingerprint;
 import io.trino.plugin.memoryhistory.MemoryHistoryConfig;
-import io.trino.plugin.memoryhistory.QueryFingerprint;
 import io.trino.plugin.memoryhistory.QueryHistoryRecord;
 import io.trino.plugin.memoryhistory.QueryHistoryStore;
 import org.junit.jupiter.api.AfterAll;

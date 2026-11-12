@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the memory-history plugin and predictor modules, then the images
+# Builds the memory-history fingerprint library, plugin and predictor modules, then the images
 #   trino-memory-history:poc            (trinodb/trino:484 + plugin)
 #   trino-memory-history-predictor:poc  (predictor service)
 # Works from any directory. Needs JDK 25, mvnd (or set MVN=mvn) and docker.
@@ -8,11 +8,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 MVN="${MVN:-mvnd}"
+FINGERPRINT_MODULE=lib/trino-memory-history-fingerprint
 PLUGIN_MODULE=plugin/trino-memory-history
 PREDICTOR_MODULE=service/trino-memory-history-predictor
 
 cd "${REPO_ROOT}"
-"${MVN}" -pl "${PLUGIN_MODULE},${PREDICTOR_MODULE}" package -DskipTests -Dair.check.skip-all=true
+# One reactor build. -am also builds the Trino modules they need (trino-spi, trino-parser, ...):
+# those SNAPSHOT artifacts are not in any remote repository, so a fresh checkout needs them built
+"${MVN}" -pl "${FINGERPRINT_MODULE},${PLUGIN_MODULE},${PREDICTOR_MODULE}" -am package -DskipTests -Dair.check.skip-all=true
 
 STAGE="$(mktemp -d)"
 trap 'rm -rf "${STAGE}"' EXIT

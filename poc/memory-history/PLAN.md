@@ -41,8 +41,9 @@ client ──▶ gate.py ──(1) POST /v1/predict─────────�
 ## Components and file layout
 
 ```
-plugin/trino-memory-history/                 Java. Fingerprint + event listener + PostgreSQL store.
-service/trino-memory-history-predictor/      Java. HTTP predictor service (depends on the plugin jar for the fingerprint).
+lib/trino-memory-history-fingerprint/        Java. Fingerprint only (plain jar, depends on trino-parser; no Guice, no SPI).
+plugin/trino-memory-history/                 Java. Event listener + PostgreSQL store (uses the fingerprint library).
+service/trino-memory-history-predictor/      Java. HTTP predictor service (uses the fingerprint library).
 poc/memory-history/
   PLAN.md                                    this file
   README.md                                  step-by-step setup and walkthrough for a human
@@ -54,11 +55,11 @@ poc/memory-history/
   results/                                   generated reports (commit the final one)
 ```
 
-Java package root: `io.trino.plugin.memoryhistory` (plugin) and `io.trino.memoryhistory.predictor` (service).
+Java package root: `io.trino.memoryhistory.fingerprint` (fingerprint library), `io.trino.plugin.memoryhistory` (plugin) and `io.trino.memoryhistory.predictor` (service).
 
 ## Contract 1: fingerprint
 
-`io.trino.plugin.memoryhistory.QueryFingerprint`
+`io.trino.memoryhistory.fingerprint.QueryFingerprint` (module `lib/trino-memory-history-fingerprint`)
 
 ```java
 public record QueryFingerprint(String hash, String normalizedSql, List<String> tables)
@@ -72,8 +73,8 @@ Rules (both the plugin and the predictor call this same method):
 1. Parse with `io.trino.sql.parser.SqlParser`. On `ParsingException` return `Optional.empty()`. Never throw.
 2. `EXECUTE IMMEDIATE '<sql>'`: unwrap and fingerprint the inner SQL.
 3. Supported statements: `Query`, `Insert`, `CreateTableAsSelect`. Everything else → `Optional.empty()`.
-4. Tables: all `Table` nodes, minus single-part names that match a CTE name. Unqualified names are completed with the session catalog/schema (use `?` when unknown). Lower-case, `catalog.schema.table`, distinct, sorted.
-5. Normalized SQL: tokenize the SQL with Trino's lexer (`SqlBaseLexer`). Drop whitespace and comments. Replace string, binary, integer, decimal and double literals with `?`. Lower-case every other token. Join with single spaces. Keep the integer after `LIMIT`. Collapse `in ( ? , ? , … )` to `in ( ? )`.
+4. Tables: all `Table` nodes, minus single-part names that match a CTE name visible at that point. A CTE is visible in the query body of its `WITH` (including subqueries) and in the definitions of later CTEs of the same `WITH`; it is not visible in its own definition (except with `WITH RECURSIVE`) or in earlier CTEs, and not outside the query that has the `WITH`. So in `WITH orders AS (SELECT * FROM orders) …` the inner `orders` is the table. An `INSERT` target is always a table. Unqualified names are completed with the session catalog/schema (use `?` when unknown). Lower-case, `catalog.schema.table`, distinct, sorted.
+5. Normalized SQL: tokenize the SQL with Trino's lexer (`SqlBaseLexer`). Drop whitespace and comments. Replace string, binary, integer, decimal and double literals with `?`. Lower-case every other token. Join with single spaces. Keep the integer after `LIMIT`. Collapse an IN list whose every element is a literal to `in ( ? )`; a literal element is `[+|-] [type] ?`, where `type` is a single-keyword typed-literal prefix (`date`, `time`, `timestamp`, `decimal`, `real`, `double`, `bigint`, `integer`, `int`, `smallint`, `tinyint`, `varchar`, `char`, `varbinary`, `json`, `uuid`, `ipaddress`), or `interval [+|-] ? field [to field]`. So `in ( - ? , - ? )` and `in ( date ? )` become `in ( ? )`. Nothing else is collapsed (function arguments, `VALUES` rows, IN lists with a non-literal element).
 6. `hash` = lower-case hex SHA-256 of `normalizedSql + "\n" + String.join(",", tables)`.
 
 Required unit tests: literals differ → same hash; different table/schema → different hash; whitespace/case/comments ignored; IN-list length ignored; LIMIT value kept; CTE name not treated as a table; unsupported statement and invalid SQL → empty.
@@ -114,7 +115,9 @@ Listener rules:
 - Event-listener name: `memory-history`. Config: `memory-history.db.url` (required), `memory-history.db.user`, `memory-history.db.password`.
 - SQL to fingerprint: `metadata.getPreparedQuery().orElse(metadata.getQuery())`; catalog/schema from `QueryContext`.
 - Only `queryCompleted`. Skip queries with no fingerprint. Never throw from the listener: log and continue.
-- Do the insert off the calling thread (single-thread executor with a bounded queue; drop and count when full).
+- The calling thread only copies the event fields and enqueues them. Parsing, fingerprinting and the insert run off the calling thread (single-thread executor, queue of 1,000; drop and count when full, log the dropped count at most once per minute).
+- Store at most 100,000 characters of `normalized_sql` and `session_properties` (the hash is computed on the full normalized SQL first).
+- JDBC `connectTimeout`, `socketTimeout` and `loginTimeout` are 10 s (parameters in `memory-history.db.url` take precedence). The table is created once; creation is retried until it succeeds. When an insert fails because the table is missing (SQLSTATE `42P01`, e.g. PostgreSQL was replaced), the table is created again and the insert retried once. Statement timeout 10 s.
 - Runs on the coordinator only.
 
 ## Contract 3: predictor HTTP API (JSON, port 8090)
