@@ -2,13 +2,14 @@
 
 It depends on where the estimator gets its numbers.
 
-**If the estimator reads the root cost (`getMaxMemory()`):** Tier C is required. Only joins,
+**If the estimator reads the root cost (`getMaxMemory()`):** the estimator needs Tier C. Only joins,
 filters and projections with no GROUP BY, ORDER BY or window function get a number. In TPC-DS
 that's close to 0% of queries.
 
 **If the estimator reads per-node statistics (`PlanNodeStatsEstimate` from `StatsAndCosts`)**,
-most of the gap closes without touching the cost-based optimizer. Statistics rules exist in
-`io.trino.cost` for: Aggregation (PARTIAL/INTERMEDIATE pass their source statistics through,
+most of the gap closes without changes to the cost-based optimizer.
+
+`io.trino.cost` has statistics rules for: Aggregation (PARTIAL/INTERMEDIATE pass their source statistics through,
 `AggregationStatsRule:59`), AssignUniqueId, DistinctLimit, DynamicFilterSource, EnforceSingleRow,
 Exchange, Filter, Join, Limit, Output, Project, RemoteSource, RowNumber, Sample, SemiJoin,
 SimpleFilterProjectSemiJoin, Sort, SpatialJoin, TableScan, TopNRanking, TopN, Union and Values.
@@ -29,7 +30,7 @@ SimpleFilterProjectSemiJoin, Sort, SpatialJoin, TableScan, TopNRanking, TopN, Un
 
 ## What we don't get
 - Estimates for window functions, COUNT(DISTINCT), UNNEST and ROLLUP/CUBE. These need new statistics rules, which both approaches require (about 250 lines).
-- Better costs for other planner code, since the cost-based optimizer is unchanged.
+- Better costs for other planner code, because the cost-based optimizer stays the same.
 - One shared memory model: ours lives in the estimator. Maintainers may prefer the cost-based optimizer's model.
 
 ## Comparison

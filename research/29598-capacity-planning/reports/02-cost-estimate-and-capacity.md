@@ -1,54 +1,72 @@
-# Agent report: memory estimate and per-worker capacity
+# Code analysis: memory estimate and per-worker capacity
 
-Opus research agent, 2026-11-08. Paths are relative to `core/trino-main/src/main/java/io/trino/`.
-The NaN finding in §1 was re-checked by hand in `cost/CostCalculatorUsingExchanges.java`.
+Date: 2026-11-08. The analysis refers to trinodb/trino master `8ae1f91f853`. Paths are relative to `core/trino-main/src/main/java/io/trino/`.
+I checked the NaN finding in §1 a second time by hand in `cost/CostCalculatorUsingExchanges.java`.
 
 ## 1. Is a whole-plan estimate available after planning?
-- `LogicalPlanner.plan` always builds `StatsAndCosts` (`LogicalPlanner.java:303-309`) using `CachingCostProvider` and the `CostCalculatorUsingExchanges` bound at `CoordinatorModule.java:338`. You read it as `plan.getStatsAndCosts().getCosts().get(plan.getRoot().getId())`, and it is available at `SqlQueryExecution.java:503`.
-- `collect_plan_statistics_for_all_queries` (off by default, `OptimizerConfig.java:56`) only controls whether new table stats are fetched. When it is off, tables not looked up during optimization get `TableStatistics.empty()` (`LogicalPlanner.java:294-302`). Building the costs is a cheap tree walk over cached data.
-- The root cost is cumulative. Each node folds in its sources through `costForStreaming`, `costForAccumulation` and `costForLookupJoin` (`CostCalculatorUsingExchanges.java:303-358`).
-- `getMaxMemory` is a modelled peak of memory held at the same time, summed over the whole cluster. It is not per node. For a lookup join, probe and build peaks are added together (line 342).
-- It only counts hash tables. A FINAL/SINGLE aggregation is charged its output size (lines 166-177). A join is charged its build size times a multiplier (`CostCalculatorWithEstimatedExchanges.java:278-297`). Exchanges and scans are charged 0 bytes (line 181), so buffers, page sizes and operator overhead are missing.
-- `getMaxMemoryWhenOutputting` is internal plumbing for the peak calculation and not useful for this feature.
-- **Blocker:** `visitPlan` returns `unknown()` (NaN) for every node type without its own visitor (lines 99-102). That includes Sort, TopN, Window, MarkDistinct, TableWriter/TableFinish, Unnest and DistinctLimit. PARTIAL aggregations also return unknown (lines 168-170). NaN carries up to the root.
-- So the root estimate is NaN for nearly every query with GROUP BY (once it is split into partial and final), ORDER BY, window functions, or INSERT/CTAS. It is also NaN when `enable_stats_calculator=false`, when the cost calculator throws, or when a connector has no stats.
-- Estimate: well over 50% of production queries would get no number, and a 200MB floor would then decide them silently.
+- `LogicalPlanner.plan` always builds `StatsAndCosts` (`LogicalPlanner.java:303-309`). It uses `CachingCostProvider` and the `CostCalculatorUsingExchanges` that `CoordinatorModule.java:338` binds. You read the root cost as `plan.getStatsAndCosts().getCosts().get(plan.getRoot().getId())`. It is available at `SqlQueryExecution.java:503`.
+- `collect_plan_statistics_for_all_queries` (off by default, `OptimizerConfig.java:56`) only controls whether the planner fetches new table stats. When it is off, tables that optimization did not look up receive `TableStatistics.empty()` (`LogicalPlanner.java:294-302`). To build the costs is a cheap tree walk over cached data.
+- The root cost is cumulative. Each node adds the cost of its sources through `costForStreaming`, `costForAccumulation` and `costForLookupJoin` (`CostCalculatorUsingExchanges.java:303-358`).
+- `getMaxMemory` is a modelled peak of memory held at the same time, summed over the whole cluster. It is not per node. For a lookup join, the model adds the probe peak and the build peak together (line 342).
+- It counts only hash tables:
+  - The model charges a FINAL/SINGLE aggregation its output size (lines 166-177).
+  - The model charges a join its build size times a multiplier (`CostCalculatorWithEstimatedExchanges.java:278-297`).
+  - The model charges 0 bytes for exchanges and scans (line 181). Thus, buffers, page sizes and operator overhead are missing.
+- `getMaxMemoryWhenOutputting` is internal plumbing for the peak calculation. It is not useful for this feature.
+- **Blocker:** `visitPlan` returns `unknown()` (NaN) for each node type that has no visitor of its own (lines 99-102). These include Sort, TopN, Window, MarkDistinct, TableWriter/TableFinish, Unnest and DistinctLimit. PARTIAL aggregations also return unknown (lines 168-170). NaN goes up to the root.
+- Thus, the root estimate is NaN for almost all queries with these features:
+  - GROUP BY (after the planner splits it into partial and final).
+  - ORDER BY.
+  - Window functions.
+  - INSERT/CTAS.
+- The root estimate is also NaN in these conditions:
+  - `enable_stats_calculator=false`.
+  - The cost calculator throws an exception.
+  - A connector has no stats.
+- Estimate: Much more than 50% of production queries would have no number. The 200MB floor would then decide them silently.
 
 ## 2. Stages and distribution
-- The model doesn't split by fragment or stage. A hash-partitioned build is charged the full build size once, with no division by `hash_partition_count`.
-- A broadcast build is charged `buildSize × estimateSourceDistributedTaskCount`, which is the current active node count or the `cost_estimation_worker_count` session property (`TaskCountEstimator.java:65-75`).
-- So the estimate already depends on today's cluster size, and the formula is circular: adding workers raises the broadcast term.
-- A broadcast build is the same size on every node. If buildSize is larger than per-node capacity, no number of workers helps.
-- `estimate / perWorkerCapacity` assumes even, perfectly divisible spread. That is wrong for broadcast, for skewed partitions, and for single-node stages (gather, final TopN, the coordinator-only root stage).
-- A sounder formula: per-node need ≈ Σ(broadcast builds) + Σ(partitioned state) / min(N, hash partitions). Solve for N. If the broadcast part alone is larger than capacity, report "infeasible".
+- The model does not split by fragment or stage. The model charges a hash-partitioned build the full build size one time. It does not divide by `hash_partition_count`.
+- The model charges a broadcast build `buildSize × estimateSourceDistributedTaskCount`. This value is the current active node count or the `cost_estimation_worker_count` session property (`TaskCountEstimator.java:65-75`).
+- Thus, the estimate already depends on the current cluster size, and the formula is circular. More workers make the broadcast term larger.
+- A broadcast build has the same size on each node. If buildSize is larger than the per-node capacity, no number of workers helps.
+- `estimate / perWorkerCapacity` assumes an even spread that divides perfectly. That assumption is wrong for these cases:
+  - Broadcast.
+  - Skewed partitions.
+  - Single-node stages (gather, final TopN, the root stage that runs only on the coordinator).
+- A better formula is: per-node need ≈ Σ(broadcast builds) + Σ(partitioned state) / min(N, hash partitions). Solve for N. If the broadcast part alone is larger than the capacity, report "infeasible".
 
 ## 3. Capacity side
-- `ClusterMemoryManager.getWorkersMemoryInfo()` (`ClusterMemoryManager.java:489`) returns per-node `MemoryInfo`, whose `MemoryPoolInfo` has `getMaxBytes`, `getFreeBytes` and `getReservedBytes` (trino-spi `MemoryPoolInfo.java:55-73`).
-- `ClusterMemoryPool` exposes total, free and reserved bytes summed across nodes, plus a node count (`ClusterMemoryPool.java:76-106`).
-- Pool size per node is heap minus `memory.heap-headroom-per-node` (`LocalMemoryManager.java:51`), so mixed hardware is visible per node.
-- The limit that actually stops a query on one node is `query.max-memory-per-node` (`NodeMemoryConfig.java:42`). That value lives in each worker's own config and isn't reported to the coordinator. Use `min(pool maxBytes, coordinator's max-memory-per-node)` as an approximation.
-- The cold-start fallback only matters when no worker has reported yet.
-- `query.max-memory` and `query.max-total-memory` (`MemoryManagerConfig.java:57-80`, enforced at `ClusterMemoryManager.java:210-221`) are cluster-wide caps that more workers can't lift. If a reliable estimate exceeds them, failing fast or warning is reasonable, but only as opt-in. Queries with retry policy TASK skip these caps (line 195).
+- `ClusterMemoryManager.getWorkersMemoryInfo()` (`ClusterMemoryManager.java:489`) returns `MemoryInfo` for each node. Its `MemoryPoolInfo` has `getMaxBytes`, `getFreeBytes` and `getReservedBytes` (trino-spi `MemoryPoolInfo.java:55-73`).
+- `ClusterMemoryPool` exposes total, free and reserved bytes summed across nodes. It also exposes a node count (`ClusterMemoryPool.java:76-106`).
+- The pool size on each node is the heap minus `memory.heap-headroom-per-node` (`LocalMemoryManager.java:51`). Thus, the coordinator can see mixed hardware per node.
+- The limit that actually stops a query on one node is `query.max-memory-per-node` (`NodeMemoryConfig.java:42`). That value is in the config of each worker, and workers do not report it to the coordinator. As an approximation, use `min(pool maxBytes, coordinator's max-memory-per-node)`.
+- The cold-start fallback is only important when no worker has reported yet.
+- `query.max-memory` and `query.max-total-memory` (`MemoryManagerConfig.java:57-80`, enforced at `ClusterMemoryManager.java:210-221`) are cluster-wide caps. More workers cannot increase them. If a reliable estimate is more than these caps, it is reasonable to fail fast or to warn, but only as opt-in. Queries with retry policy TASK skip these caps (line 195).
 
 ## 4. Existing mechanisms
-- `required_workers_count` / `query-manager.required-workers` with `ClusterSizeMonitor.waitForMinimumWorkers` (`ClusterSizeMonitor.java:97`) already does "wait for N workers, then fail with a timeout". It runs before planning, in `LocalDispatchQuery.waitForMinimumWorkers` (`LocalDispatchQuery.java:123`). The new feature should reuse this future and be framed as setting the required count dynamically.
-- Nothing in execution reads cost-based optimizer memory today. `getStatsAndCosts` has no callers outside the planner and fragmenter.
-- The fault-tolerant execution estimators (`PartitionMemoryEstimator`, `ExponentialGrowthPartitionMemoryEstimator`, `BinPackingNodeAllocatorService`) work from runtime peak usage and error history, not from the cost model. They don't conflict, but they don't reuse each other either. With retry policy TASK, the bin-packing allocator already queues work against real per-node memory, so pre-flight should probably be skipped for TASK.
-- The low-memory killers act after the fact. A pre-flight check doesn't replace them.
+- `required_workers_count` / `query-manager.required-workers` with `ClusterSizeMonitor.waitForMinimumWorkers` (`ClusterSizeMonitor.java:97`) already does "wait for N workers, then fail with a timeout". It runs before planning, in `LocalDispatchQuery.waitForMinimumWorkers` (`LocalDispatchQuery.java:123`). The new feature should use this future again. Describe the feature as a dynamic setting of the required count.
+- Today, no execution code reads the memory from the cost-based optimizer. `getStatsAndCosts` has no callers outside the planner and the fragmenter.
+- The fault-tolerant execution estimators (`PartitionMemoryEstimator`, `ExponentialGrowthPartitionMemoryEstimator`, `BinPackingNodeAllocatorService`) use runtime peak usage and error history, not the cost model. They do not conflict with the cost model, but they also do not share code with it. With retry policy TASK, the bin-packing allocator already queues work against real per-node memory. Thus, the pre-flight check should probably not run for TASK.
+- The low-memory killers act after the problem occurs. A pre-flight check does not replace them.
 
 ## 5. Accuracy risk
-- Under-prediction is likely. Stats estimate row counts and sizes, not Java heap; overheads are excluded; cardinality errors compound up the plan. The 2.0 safety multiplier is arbitrary.
-- Over-prediction happens with broadcast scaling and spill-capable operators.
+- Under-prediction is likely, for these reasons:
+  - Stats estimate row counts and sizes, not Java heap.
+  - The model excludes overheads.
+  - Cardinality errors become larger at each level up the plan.
+  - The 2.0 safety multiplier is arbitrary.
+- Over-prediction occurs with broadcast scaling and with operators that can spill.
 - Recommendations:
-  - Treat NaN as "unknown → no-op". Don't let the floor stand in for a real estimate.
-  - Log or emit the estimate next to actual peak memory (QueryStats) so it can be calibrated.
-  - Put this behind an internal `QueryCapacityEstimator` interface rather than a public SPI at first.
-  - Keep it off by default.
+  - Treat NaN as "unknown → no-op". Do not let the floor replace a real estimate.
+  - Log or emit the estimate next to the actual peak memory (QueryStats). Then you can calibrate it.
+  - At first, put the estimate behind an internal `QueryCapacityEstimator` interface, not a public SPI.
+  - Keep the feature off by default.
 
 ## Changes needed
-- New estimator plus config (~300-400 lines). It should walk the fragmented `SubPlan` and treat partitioned and broadcast memory separately.
-- `SqlQueryExecution` or `LocalDispatchQuery`: wire in the estimate and an async wait (~80-150 lines).
-- Per-node capacity helper in `ClusterMemoryManager` (~40 lines).
-- Session properties in `SystemSessionProperties` (~40 lines).
-- Tests (~400+ lines).
-- Optional but needed for real coverage: visitors in `CostCalculatorUsingExchanges` for Sort, TopN, Window, partial aggregation and TableWriter (~200-400 lines plus plan-test expectation updates).
+- A new estimator plus config needs ~300-400 lines. It should walk the fragmented `SubPlan` and treat partitioned memory and broadcast memory separately.
+- `SqlQueryExecution` or `LocalDispatchQuery` must connect the estimate and an async wait. The estimate is ~80-150 lines.
+- A per-node capacity helper in `ClusterMemoryManager` needs ~40 lines.
+- Session properties in `SystemSessionProperties` need ~40 lines.
+- Tests need ~400+ lines.
+- Visitors in `CostCalculatorUsingExchanges` for Sort, TopN, Window, partial aggregation and TableWriter are optional, but real coverage needs them. They need ~200-400 lines, plus updates to the expected results of plan tests.

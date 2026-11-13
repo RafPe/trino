@@ -1,25 +1,25 @@
 # Implementation plan
 
-## Local environment (set up on 2026-11-08)
+## Local build environment (configured on 2026-11-08)
 
 - **Host:** aarch64, 16 cores, 124 GB RAM, Ubuntu 26.04.
 - **JDK:** `openjdk-25-jdk-headless` 25.0.4, matching the repo's `.java-version` of 25.
-- **mvnd 1.0.6** (Maven 3.9.16), installed in `~/.local/opt`. `java.home` is set in `~/.m2/mvnd.properties`.
+- **mvnd 1.0.6** (Maven 3.9.16), installed in `~/.local/opt`. `~/.m2/mvnd.properties` sets `java.home`.
 - **Warm-up build:** `mvnd -pl core/trino-main -am install -DskipTests -Dair.check.skip-all=true` took 2 min 10 s.
 - `trino-tests` is not built yet. The integration test phase needs it.
 
-## Phases (wall-clock agent time, not human review)
+## Phases (estimated working time, without review time)
 
 | # | Phase | Parallel? | Estimate |
 |---|---|---|---|
 | 0 | Setup and warm-up build | no | done |
-| 1 | Workstreams WS1–WS3, each in its own git worktree with no shared files | yes | 1–2 h |
+| 1 | Workstreams WS1–WS3, each on its own branch in its own git worktree, with no shared files | yes | 1–2 h |
 | 2 | Integration: wire the estimator into the planning/wait path, inject it in `SqlQueryExecutionFactory`, bind it in `CoordinatorModule` | no | ~1 h |
 | 3 | Integration test `TestMemoryBasedWorkerRequirement`, modelled on `TestMinWorkerRequirement` (start with 0 workers, `addServers(N)`, assert on the wait) | no | 45–90 min |
 | 4 | Verification: `airstyle:check`, the targeted tests in `trino-main`, `TestQueryManagerConfig`, and a code review | partly | ~1 h |
 | 5 | Docs, commit split per the commit policy, PR text from the template | no | 30 min |
 
-The total for Tiers A+B is about 5–7 hours of agent wall-clock time, ending as 3–4 commits.
+The total for Tiers A+B is about 5–7 hours of estimated working time. The result is 3–4 commits.
 
 ## Workstreams
 
@@ -33,9 +33,9 @@ The total for Tiers A+B is about 5–7 hours of agent wall-clock time, ending as
 WS2 alone edits `SystemSessionProperties`. The others get their values through the interface, so
 merging their branches doesn't conflict.
 
-## Child workspaces (Orca)
+## Branches
 
-All four are children of `RafPe/pre-flight-cluster-capacity-planning-to-prevent`:
+All four branches start from `RafPe/pre-flight-cluster-capacity-planning-to-prevent`:
 
 - `RafPe/capacity-ws1-gauges`
 - `RafPe/capacity-ws2-estimator`
@@ -45,5 +45,5 @@ All four are children of `RafPe/pre-flight-cluster-capacity-planning-to-prevent`
 ## Bottlenecks and risks
 
 - The build, not the coding. Run specific test classes, never the whole `trino-main` test suite.
-- Accuracy can't be shown locally; it needs a cluster and a TPC-DS run. Log predicted vs. actual peak memory so the multiplier can be calibrated.
+- I can't show accuracy locally. It needs a cluster and a TPC-DS run. Log predicted vs. actual peak memory to calibrate the multiplier.
 - Tier C cost visitors could change query plans unless the plan-selection calculator keeps returning NaN for the new nodes (see the assessment, §2).
