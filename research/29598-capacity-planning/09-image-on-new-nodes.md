@@ -6,8 +6,8 @@ Trino workers scale up shortly before a heavy query runs. Karpenter starts new n
 must pull the container image before the worker can start. An earlier estimate put this pull at about
 20–60 seconds for each new node.
 
-This note compares the ways to remove or shorten that pull. CNCF status was read from cncf.io and the
-CNCF landscape file on 2026-11-13. Nothing in this note was tried on a cluster. Each row says if I read the
+This note compares the ways to remove or shorten that pull. I read the CNCF status on cncf.io and in the
+CNCF landscape file on 2026-11-13. I did not try anything in this note on a cluster. Each row says if I read the
 claim in the project's own documentation ("checked") or not ("not checked").
 
 ## Terms
@@ -67,6 +67,90 @@ To measure a custom image:
 | Harbor preheat | Pre-pull to P2P | Harbor: Graduated | Pushes images to Dragonfly or Kraken. | Only through P2P | Harbor and a P2P engine | High | A second registry to operate | — |
 | kubelet parallel image pulls | kubelet setting | Kubernetes | Pulls different images at the same time. | No gain here. One pod has one image. | — | — | — | — |
 
+## SOCI parallel pull in detail
+
+I read the SOCI project documentation and the AWS Karpenter blueprint for this section. I did not try it
+on a cluster.
+
+### What it is
+
+- SOCI ("Seekable OCI") is an open-source project from AWS Labs. It is not a CNCF project.
+- SOCI is a snapshotter for containerd.
+- SOCI has two modes:
+  - **Lazy loading** starts the container before the image is fully downloaded. This is the older mode.
+  - **Parallel pull and unpack** downloads the full image before the container starts, but faster. This section is about this mode.
+
+### How it works
+
+An image is a stack of compressed files (layers). By default, containerd downloads each layer on one
+connection. Then it unpacks the layers one after the other.
+
+Parallel mode changes two steps:
+
+- **Download:** it divides each layer into chunks. It downloads the chunks at the same time on many connections. It writes the chunks to a temporary file on disk, not to memory.
+- **Unpack:** it decompresses and extracts more than one layer at the same time.
+
+### How to turn it on with Karpenter
+
+Current EKS node images contain SOCI. No component is necessary in the cluster. The setting goes in the
+`EC2NodeClass`.
+
+Amazon Linux 2023, node images newer than v20250821:
+
+```yaml
+userData: |
+  apiVersion: node.eks.aws/v1alpha1
+  kind: NodeConfig
+  spec:
+    featureGates:
+      FastImagePull: true
+```
+
+Bottlerocket, newer than 1.44:
+
+```toml
+[settings.container-runtime]
+snapshotter = "soci"
+[settings.container-runtime-plugins.soci-snapshotter]
+pull-mode = "parallel-pull-unpack"
+```
+
+| Setting | AL2023 default | Bottlerocket default | AWS recommendation |
+|---|---|---|---|
+| `max_concurrent_downloads_per_image` | 20 | 3 | 10–20 for ECR |
+| `max_concurrent_unpacks_per_image` | 12 | 1 | The average layer count of the images |
+| `concurrent_download_chunk_size` | 16mb | unlimited (no chunks) | 16mb, if the registry supports range requests |
+| `discard_unpacked_layers` | true | false | true on EKS nodes |
+
+### What it needs
+
+- **A registry that supports HTTP range requests.** ECR does. Docker Hub can limit the request rate, so keep the image in ECR.
+- **A fast disk.** The blueprint sets the gp3 volume to 1000 MiB/s and 16,000 IOPS. It gives 600 MiB/s as a good start value. Local NVMe disks (`instanceStorePolicy: RAID0`) are an alternative.
+- **Sufficient CPU and network.** The SOCI documentation says that large instances get the most benefit. The blueprint uses only instance types with more than 8,000 Mbps of network and EBS bandwidth.
+
+### What to expect for the Trino image
+
+The AWS figures are for images of 9–10 GB with many layers. The Trino image is about 1 GB compressed, and
+one layer of 852 MB is almost all of it.
+
+- The download will probably be faster, because chunks divide the large layer across many connections.
+- The unpack will probably get little benefit, because parallel unpack works across layers.
+
+I have no figure for the Trino image. It is necessary to measure this.
+
+### Risks
+
+- The AL2023 documentation calls the `FastImagePull` feature experimental.
+- A change to the `EC2NodeClass` makes Karpenter replace the nodes of that class (drift). Use a separate `EC2NodeClass` and `NodePool` for the first test.
+- The node uses more CPU, disk and network during the pull.
+- `discard_unpacked_layers = true` conflicts with a setting that Spegel needs.
+
+### How to test it
+
+1. Create a second `EC2NodeClass` and `NodePool` with parallel pull and a faster disk.
+2. Start one Trino worker on a new node of each class.
+3. Compare the time between the `Pulling` and `Pulled` events in `kubectl get events`.
+
 ## Recommended order
 
 1. **Measure the baseline** on the real cluster (see the list below).
@@ -86,7 +170,7 @@ To measure a custom image:
 - The time from container `Started` to `SERVER STARTED` in the Trino log.
 - The layer count and layer sizes of the image in use.
 - Node CPU, disk throughput and network during the pull.
-- The time from Karpenter `NodeClaim` launch to node `Ready`.
+- The time from the creation of the Karpenter `NodeClaim` to node `Ready`.
 
 ## Not checked
 
@@ -103,6 +187,7 @@ To measure a custom image:
 - SOCI snapshotter and parallel mode: https://github.com/awslabs/soci-snapshotter , https://github.com/awslabs/soci-snapshotter/blob/main/docs/parallel-mode.md
 - AWS, SOCI parallel pull on EKS: https://aws.amazon.com/blogs/containers/introducing-seekable-oci-parallel-pull-mode-for-amazon-eks/
 - Karpenter blueprint for SOCI: https://github.com/aws-samples/karpenter-blueprints/tree/main/blueprints/soci-snapshotter
+- AL2023 nodeadm examples (`FastImagePull`): https://awslabs.github.io/amazon-eks-ami/nodeadm/doc/examples/
 - EKS best practices, performance: https://docs.aws.amazon.com/eks/latest/best-practices/aiml-performance.html
 - AWS, Bottlerocket data volume: https://aws.amazon.com/blogs/containers/reduce-container-startup-time-on-amazon-eks-with-bottlerocket-data-volume/
 - EBS volume initialization: https://docs.aws.amazon.com/ebs/latest/userguide/initalize-volume.html

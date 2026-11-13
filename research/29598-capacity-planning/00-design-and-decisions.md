@@ -108,7 +108,7 @@ TPC-DS/TPC-H workload, 13 query shapes × 3 literal variants, cluster with 1 GB 
 2. Trino does not report per-node peak memory per query. This number would remove the safety factor.
 3. The gate must become transparent (proxy or Trino Gateway) to cover BI and JDBC clients.
 4. Shared CTEs/subqueries across different queries need plan-based fingerprints.
-5. Cold start: new nodes take roughly 1.5–3 min (node start, image pull, JVM). Which part should I shorten first?
+5. Cold start: new nodes take roughly 1.5–3 min (node start, image pull, JVM). Which part should I shorten first? The options for the image pull are in [09-image-on-new-nodes.md](09-image-on-new-nodes.md).
 6. Upstream: is #32089 (cost/stats for missing plan nodes) wanted, and how to sequence with PR #31287?
 
 ## 9. Next steps
@@ -128,6 +128,7 @@ TPC-DS/TPC-H workload, 13 query shapes × 3 literal variants, cluster with 1 GB 
 | Upstream overlap | `06-upstream-overlap.md` |
 | Prior art on memory prediction | `07-prior-art-memory-prediction.md` |
 | Karpenter NodeClaim analysis | `08-karpenter-nodeclaim-analysis.md` |
+| Image on new nodes (smaller image, SOCI parallel pull, disk snapshot) | `09-image-on-new-nodes.md` |
 | PoC code, contracts, results | branch `RafPe/memory-history-poc`, `poc/memory-history/` |
 | Small upstream-candidate branches (stats rules, docs, gauge) | `RafPe/stats-*`, `RafPe/docs-required-workers`, `RafPe/capacity-ws1-gauges` (not reviewed, no PRs opened) |
 | Draft texts for issues and Slack | local only, git-ignored `drafts/` |
