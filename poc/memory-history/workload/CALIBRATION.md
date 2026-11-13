@@ -1,13 +1,16 @@
 # Calibration (milestone M4)
 
-Measured on 2026-11-12 on the compose cluster (`compose/`), stock image `trinodb/trino:484`
-(no event listener, no predictor), host: Linux arm64, 16 cores, 124 GB RAM.
+I measured these numbers on 2026-11-12 on the compose cluster (`compose/`):
+
+- stock image `trinodb/trino:484` (no event listener, no predictor)
+- host: Linux arm64, 16 cores, 124 GB RAM.
+
 All peaks come from `GET /v1/query/{id}` (`queryStats.peakUserMemoryReservation`,
-`queryStats.peakTaskUserMemory`), read by `gate/gate.py`. 1 GiB = 2^30 bytes.
+`queryStats.peakTaskUserMemory`). `gate/gate.py` reads them. 1 GiB = 2^30 bytes.
 
 ## Final cluster numbers
 
-Contract 5 starting numbers needed **no change**:
+The starting numbers of Contract 5 needed **no change**:
 
 | setting | value |
 |---|---|
@@ -18,7 +21,7 @@ Contract 5 starting numbers needed **no change**:
 | catalogs | `tpcds` (`tpcds.splits-per-node=4`), `tpch` (`tpch.splits-per-node=4`) |
 | session | `join_distribution_type=PARTITIONED`, `task_concurrency=4` |
 
-The memory limits are set in `compose/.env` (`QUERY_MAX_MEMORY_PER_NODE`, `QUERY_MAX_MEMORY`).
+`compose/.env` sets the memory limits (`QUERY_MAX_MEMORY_PER_NODE`, `QUERY_MAX_MEMORY`).
 
 ## Heavy queries: fail on 2 workers, pass on more
 
@@ -27,8 +30,9 @@ Each run is one query, ungated (`--no-gate`), on an idle cluster.
 
 - **q18, q09**: fail on 2 workers, pass on 3, 4 and 6.
 - **q21**: fails on 2 **and 3** workers, passes on 4 and 6.
-- Every run is under 13 s. All 9 (template, variant) pairs behave the same; a repeat of the 2-worker runs
-  (learn pass in the gate test below) gave the same states and error codes.
+- Every run is under 13 s. All 9 (template, variant) pairs behave the same.
+- I repeated the 2-worker runs (learn pass in the gate test below). The repeat gave the same states and
+  error codes.
 
 | template | variant | workers | query id | state | error code | peak user mem | peak task user mem | wall |
 |---|---|---|---|---|---|---|---|---|
@@ -71,17 +75,19 @@ Each run is one query, ungated (`--no-gate`), on an idle cluster.
 
 Observations that matter for the predictor:
 
-- A failed run's peak is a lower bound, and it is close to the 2-worker capacity (≈ 1.6–2.0 GiB of 2 GiB).
+- The peak of a failed run is a lower bound. It is close to the 2-worker capacity (≈ 1.6–2.0 GiB of 2 GiB).
 - The cluster-wide peak grows a little with more workers (q21: 2.9 → 3.3 GiB from 4 to 6 workers).
-- q18 needs 3 workers although its successful peak (1.4–1.7 GiB) is below 2 × 1 GiB: per-node memory is not
-  spread evenly. With `SAFETY_FACTOR=1.2`, a successful peak of 1.71 GiB gives 3 workers (OK), but 1.54 GiB
-  gives 2 workers, which fails. See open problems.
-- `peakTaskUserMemory` (≤ 0.8 GiB) never reaches the 1 GiB node limit: several tasks of one query share a node.
+- q18 needs 3 workers, although its successful peak (1.4–1.7 GiB) is below 2 × 1 GiB. The reason: per-node
+  memory is not spread evenly. With `SAFETY_FACTOR=1.2`, a successful peak of 1.71 GiB gives 3 workers (OK).
+  But 1.54 GiB gives 2 workers, which fails. For this reason the PoC deployments use a safety factor of 1.5 (see [../README.md](../README.md), "Known limits").
+- `peakTaskUserMemory` (≤ 0.8 GiB) never reaches the 1 GiB node limit. The reason: several tasks of one query share a node.
 
 ### TPC-DS candidates (also measured, not in the workload)
 
-TPC-DS heavy queries show the same effect but are slow, because `tpcds` generates data on the fly with
-4 splits per node (and does not split tables at all below about sf5, so `sf1`–`sf3` scans run on one thread):
+TPC-DS heavy queries show the same effect, but they are slow. The reasons:
+
+- `tpcds` generates data on the fly with 4 splits per node.
+- Below about sf5, `tpcds` does not split tables at all. Thus `sf1`–`sf3` scans run on one thread.
 
 | query | schema | workers | query id | state | error code | peak user mem | wall |
 |---|---|---|---|---|---|---|---|
@@ -101,12 +107,12 @@ TPC-DS heavy queries show the same effect but are slow, because `tpcds` generate
 | q78 | sf10 | 2 | `20261112_125142_00009_wsu9y` | FINISHED | - | 0.74 GiB | 86 s |
 | q95 | sf10 | 2 | `20261112_125555_00021_wsu9y` | FINISHED | - | 0.58 GiB | 71 s |
 
-TPC-H q18/q09/q21 at sf5 were chosen because they show the same behavior in 4–13 s instead of ~2 min.
+I chose TPC-H q18/q09/q21 at sf5 because they show the same behavior in 4–13 s instead of ~2 min.
 
 ## Small and medium templates (2 workers, ungated)
 
-One full ungated pass of all 13 templates × 3 variants on 2 workers took **520 s** (39 queries; the 9 heavy
-ones failed in 4–7 s). No variant returned an empty result.
+One full ungated pass of all 13 templates × 3 variants on 2 workers took **520 s** (39 queries). The 9 heavy
+queries failed in 4–7 s. No variant returned an empty result.
 
 | template | size | schema | peak user mem (min–max over 3 variants) | wall per query |
 |---|---|---|---|---|
@@ -121,14 +127,14 @@ ones failed in 4–7 s). No variant returned an empty result.
 | tpcds_q43 | medium | sf10 | 1079.2 MiB – 1145.2 MiB | 23–24 s |
 | tpch_q13 | medium | sf10 | 575.0 MiB – 588.5 MiB | 10–11 s |
 
-Note: `tpcds_q19` and `tpcds_q43` at sf10 peak at 1.0–1.4 GiB on 2 workers and pass; they are the
+Note: `tpcds_q19` and `tpcds_q43` at sf10 peak at 1.0–1.4 GiB on 2 workers and pass. They are the
 "upper medium" cases (the predictor should keep them at `MIN_WORKERS`=2).
 
-## Gate + scaler mechanism with the mock predictor (M5 rehearsal, stock image)
+## Gate + scaler with the mock predictor (M5 trial, stock image)
 
-`gate/test_gate_mock.sh` (TEST ONLY: `gate/mock_predictor.py` returns canned answers; it is not the real predictor).
-Query: `tpch_q21` (SAUDI ARABIA) at `tpch.sf5`. The mock says "known, 4 workers"; `scaler.py` runs with
-`--down-delay 30`.
+Script: `gate/test_gate_mock.sh`. This is a test only. `gate/mock_predictor.py` returns fixed answers. It is
+not the real predictor. Query: `tpch_q21` (SAUDI ARABIA) at `tpch.sf5`. The mock says "known, 4 workers".
+`scaler.py` runs with `--down-delay 30`.
 
 1. Ungated, 2 workers → FAILED, `EXCEEDED_LOCAL_MEMORY_LIMIT`:
 
@@ -143,7 +149,7 @@ Query: `tpch_q21` (SAUDI ARABIA) at `tpch.sf5`. The mock says "known, 4 workers"
 {"actual": {"cpu_ms": 138000, "elapsed_ms": 34340, "error_code": null, "error_type": null, "execution_ms": 14790, "peak_task_total_memory_bytes": 475415568, "peak_task_user_memory_bytes": 475415568, "peak_user_memory_bytes": 3083713376, "physical_input_rows": 93703911, "queued_ms": 0, "resource_waiting_ms": 19550, "state": "FINISHED"}, "catalog": "tpch", "client_wall_ms": 34355, "error_code": null, "gated": true, "prediction": {"basis": "mock", "fingerprint": "8a32acf8c189b76beccd626cec0345495edfd2b880041324a94b7e62c83bd360", "known": true, "memoryFailures": 1, "predictedPeakTaskUserMemoryBytes": 894784853, "predictedPeakUserMemoryBytes": 3579139412, "requiredWorkers": 4, "runs": 1, "successfulRuns": 0, "supported": true}, "query_id": "20261112_134039_00375_wsu9y", "required_workers": 4, "reservation_id": "15d43ac1-b7e8-4551-8662-bd8f712dab9c", "rows": 100, "schema": "sf5", "state": "FINISHED", "tags": ["test=gated"], "ts": "2026-11-12T13:40:39+00:00", "wait_ms": 19550, "workers_after": 4, "workers_before": 2}
 ```
 
-Scaler log (scale-up 5 s after the reservation; scale-down 30 s after the reservation was deleted):
+Scaler log (scale-up 5 s after the reservation, scale-down 30 s after the gate deleted the reservation):
 
 ```
 2026-11-12T13:40:37 scaler: start: running=2
@@ -152,8 +158,13 @@ Scaler log (scale-up 5 s after the reservation; scale-down 30 s after the reserv
 2026-11-12T13:41:45 scaler: scale worker=2 (wanted=2, reservations=0, running=4)
 ```
 
-`run_workload.py` + `report.py` were also run with the mock (learn pass with an empty mock, predict pass with
-the mock knowing the 3 heavy templates, `tpch_q06`/`tpch_q13`/heavy only): learn pass 9/9 heavy runs
-failed on 2 workers; predict pass 15/15 FINISHED, the first heavy query waited 22.1 s while the scaler
-added 2 workers. `report.py` was tested both with PostgreSQL unreachable/no table (falls back to
-`runs.jsonl`) and with a hand-made `query_history` row (uses it).
+I also ran `run_workload.py` + `report.py` with the mock, on `tpch_q06`/`tpch_q13`/heavy only:
+
+- Learn pass, with an empty mock: 9/9 heavy runs failed on 2 workers.
+- Predict pass, with a mock that knows the 3 heavy templates: 15/15 FINISHED. The first heavy query waited
+  22.1 s while the scaler added 2 workers.
+
+I tested `report.py` in two cases:
+
+- PostgreSQL unreachable or no table: it falls back to `runs.jsonl`.
+- A hand-made `query_history` row: it uses the row.

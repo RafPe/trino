@@ -4,25 +4,25 @@ Branch: `RafPe/memory-history-poc` on https://github.com/RafPe/trino (base: trin
 
 ## Goal (the only goal)
 
-Show, with a setup a person can run, that for **repeated queries** we can:
+Show, with a setup that a person can run, that for **repeated queries** it is possible to:
 
-1. record each completed query's fingerprint and peak memory (**collect**);
-2. predict the peak memory of a new query with a known fingerprint (**predict**);
-3. use the prediction to get more workers *before* the query runs (**act**);
+1. record the fingerprint and peak memory of each completed query (**collect**)
+2. predict the peak memory of a new query with a known fingerprint (**predict**)
+3. use the prediction to get more workers *before* the query runs (**act**)
 4. report how good the predictions are (**measure**).
 
 No Trino core changes. Everything is a plugin, a small service, scripts and config.
 
 ## Out of scope (do not build)
 
-- Changes under `core/` (except registering new modules in the root `pom.xml`).
+- Changes under `core/` (except the registration of new modules in the root `pom.xml`).
 - Plan-based fingerprints, per-node peak memory, hooks inside Trino.
 - Machine-learning models. The predictor is a lookup with simple arithmetic.
 - Trino Gateway. Authentication, TLS, HA, persistence tuning, upstream docs.
 - A transparent HTTP proxy. The gate is a client-side script.
 - Any data source other than the built-in `tpcds` / `tpch` connectors.
 
-If a task seems to need something from this list, stop and report it instead of building it.
+If a change seems to need an item from this list, do not build it.
 
 ## Architecture
 
@@ -35,8 +35,8 @@ client ──▶ gate.py ──(1) POST /v1/predict─────────�
         Trino coordinator ── waits for N workers ── runs query ── QueryCompletedEvent ──▶ memory-history event listener
 ```
 
-- Trino itself holds the query: the gate sets the existing session properties `required_workers_count` and `required_workers_max_wait_time`.
-- Unknown fingerprint → no reservation, no wait, the query is submitted unchanged.
+- Trino itself holds the query. The gate sets the existing session properties `required_workers_count` and `required_workers_max_wait_time`.
+- Unknown fingerprint → no reservation, no wait. The gate submits the query unchanged.
 
 ## Components and file layout
 
@@ -55,7 +55,7 @@ poc/memory-history/
   results/                                   generated reports (commit the final one)
 ```
 
-Java package root: `io.trino.memoryhistory.fingerprint` (fingerprint library), `io.trino.plugin.memoryhistory` (plugin) and `io.trino.memoryhistory.predictor` (service).
+Java package roots: `io.trino.memoryhistory.fingerprint` (fingerprint library), `io.trino.plugin.memoryhistory` (plugin) and `io.trino.memoryhistory.predictor` (service).
 
 ## Contract 1: fingerprint
 
@@ -68,20 +68,46 @@ public record QueryFingerprint(String hash, String normalizedSql, List<String> t
 }
 ```
 
-Rules (both the plugin and the predictor call this same method):
+Rules (the plugin and the predictor both call this same method):
 
-1. Parse with `io.trino.sql.parser.SqlParser`. On `ParsingException` return `Optional.empty()`. Never throw.
-2. `EXECUTE IMMEDIATE '<sql>'`: unwrap and fingerprint the inner SQL.
+1. Parse with `io.trino.sql.parser.SqlParser`. On `ParsingException`, return `Optional.empty()`. Never throw.
+2. `EXECUTE IMMEDIATE '<sql>'`: unwrap the inner SQL and fingerprint it.
 3. Supported statements: `Query`, `Insert`, `CreateTableAsSelect`. Everything else → `Optional.empty()`.
-4. Tables: all `Table` nodes, minus single-part names that match a CTE name visible at that point. A CTE is visible in the query body of its `WITH` (including subqueries) and in the definitions of later CTEs of the same `WITH`; it is not visible in its own definition (except with `WITH RECURSIVE`) or in earlier CTEs, and not outside the query that has the `WITH`. So in `WITH orders AS (SELECT * FROM orders) …` the inner `orders` is the table. An `INSERT` target is always a table. Unqualified names are completed with the session catalog/schema (use `?` when unknown). Lower-case, `catalog.schema.table`, distinct, sorted.
-5. Normalized SQL: tokenize the SQL with Trino's lexer (`SqlBaseLexer`). Drop whitespace and comments. Replace string, binary, integer, decimal and double literals with `?`. Lower-case every other token. Join with single spaces. Keep the integer after `LIMIT`. Collapse an IN list whose every element is a literal to `in ( ? )`; a literal element is `[+|-] [type] ?`, where `type` is a single-keyword typed-literal prefix (`date`, `time`, `timestamp`, `decimal`, `real`, `double`, `bigint`, `integer`, `int`, `smallint`, `tinyint`, `varchar`, `char`, `varbinary`, `json`, `uuid`, `ipaddress`), or `interval [+|-] ? field [to field]`. So `in ( - ? , - ? )` and `in ( date ? )` become `in ( ? )`. Nothing else is collapsed (function arguments, `VALUES` rows, IN lists with a non-literal element).
+4. Tables: all `Table` nodes, minus single-part names that match a CTE name visible at that point.
+   - A CTE is visible in the query body of its `WITH` (including subqueries).
+   - A CTE is visible in the definitions of later CTEs of the same `WITH`.
+   - A CTE is not visible in its own definition (except with `WITH RECURSIVE`).
+   - A CTE is not visible in earlier CTEs, and not outside the query that has the `WITH`.
+   - Thus in `WITH orders AS (SELECT * FROM orders) …` the inner `orders` is the table.
+   - An `INSERT` target is always a table.
+   - Complete unqualified names with the session catalog/schema. Use `?` when the catalog or schema is unknown.
+   - Lower-case, `catalog.schema.table`, distinct, sorted.
+5. Normalized SQL:
+   - Tokenize the SQL with the Trino lexer (`SqlBaseLexer`).
+   - Drop whitespace and comments.
+   - Replace string, binary, integer, decimal and double literals with `?`.
+   - Lower-case every other token.
+   - Join the tokens with single spaces.
+   - Keep the integer after `LIMIT`.
+   - Collapse an IN list whose every element is a literal to `in ( ? )`.
+   - A literal element is `[+|-] [type] ?`, or `interval [+|-] ? field [to field]`. Here `type` is a single-keyword typed-literal prefix (`date`, `time`, `timestamp`, `decimal`, `real`, `double`, `bigint`, `integer`, `int`, `smallint`, `tinyint`, `varchar`, `char`, `varbinary`, `json`, `uuid`, `ipaddress`).
+   - Thus `in ( - ? , - ? )` and `in ( date ? )` become `in ( ? )`.
+   - Do not collapse anything else (function arguments, `VALUES` rows, IN lists with a non-literal element).
 6. `hash` = lower-case hex SHA-256 of `normalizedSql + "\n" + String.join(",", tables)`.
 
-Required unit tests: literals differ → same hash; different table/schema → different hash; whitespace/case/comments ignored; IN-list length ignored; LIMIT value kept; CTE name not treated as a table; unsupported statement and invalid SQL → empty.
+Required unit tests:
+
+- Different literals → same hash.
+- Different table/schema → different hash.
+- Whitespace, case and comments are ignored.
+- IN-list length is ignored.
+- The LIMIT value is kept.
+- A CTE name is not a table.
+- An unsupported statement and invalid SQL → empty.
 
 ## Contract 2: history table (PostgreSQL)
 
-The listener creates it at startup (`CREATE TABLE IF NOT EXISTS`). The predictor only reads it.
+The listener creates the table at startup (`CREATE TABLE IF NOT EXISTS`). The predictor only reads it.
 
 ```sql
 CREATE TABLE IF NOT EXISTS query_history (
@@ -113,16 +139,29 @@ CREATE INDEX IF NOT EXISTS query_history_fingerprint_idx ON query_history (finge
 Listener rules:
 
 - Event-listener name: `memory-history`. Config: `memory-history.db.url` (required), `memory-history.db.user`, `memory-history.db.password`.
-- SQL to fingerprint: `metadata.getPreparedQuery().orElse(metadata.getQuery())`; catalog/schema from `QueryContext`.
-- Only `queryCompleted`. Skip queries with no fingerprint. Never throw from the listener: log and continue.
-- The calling thread only copies the event fields and enqueues them. Parsing, fingerprinting and the insert run off the calling thread (single-thread executor, queue of 1,000; drop and count when full, log the dropped count at most once per minute).
-- Store at most 100,000 characters of `normalized_sql` and `session_properties` (the hash is computed on the full normalized SQL first).
-- JDBC `connectTimeout`, `socketTimeout` and `loginTimeout` are 10 s (parameters in `memory-history.db.url` take precedence). The table is created once; creation is retried until it succeeds. When an insert fails because the table is missing (SQLSTATE `42P01`, e.g. PostgreSQL was replaced), the table is created again and the insert retried once. Statement timeout 10 s.
+- SQL to fingerprint: `metadata.getPreparedQuery().orElse(metadata.getQuery())`. Catalog/schema come from `QueryContext`.
+- Only `queryCompleted`. Skip queries with no fingerprint. Never throw from the listener. Log the error and continue.
+- The calling thread only copies the event fields and puts them in the queue.
+- Parsing, fingerprinting and the insert run off the calling thread:
+  - single-thread executor, queue of 1,000
+  - when the queue is full, drop the record and count it
+  - log the dropped count at most once per minute.
+- Store at most 100,000 characters of `normalized_sql` and `session_properties`. Compute the hash on the full normalized SQL first.
+- JDBC `connectTimeout`, `socketTimeout` and `loginTimeout` are 10 s. Parameters in `memory-history.db.url` take precedence.
+- Create the table once. Retry the creation until it succeeds.
+- When an insert fails because the table is missing (SQLSTATE `42P01`, e.g. after a replacement of PostgreSQL), create the table again and retry the insert once.
+- Statement timeout 10 s.
 - Runs on the coordinator only.
 
 ## Contract 3: predictor HTTP API (JSON, port 8090)
 
-Config by environment variables: `DB_URL`, `DB_USER`, `DB_PASSWORD`, `PER_WORKER_MEMORY_BYTES` (the cluster's `query.max-memory-per-node`), `MIN_WORKERS` (default 2), `MAX_WORKERS` (default 6), `SAFETY_FACTOR` (service default 1.2; the PoC deployments set 1.5, see README), `FAILURE_GROWTH_FACTOR` (default 2.0), `HISTORY_RUNS` (default 10), `PORT` (default 8090).
+Config by environment variables:
+
+- `DB_URL`, `DB_USER`, `DB_PASSWORD`
+- `PER_WORKER_MEMORY_BYTES` (the `query.max-memory-per-node` of the cluster)
+- `MIN_WORKERS` (default 2), `MAX_WORKERS` (default 6)
+- `SAFETY_FACTOR` (service default 1.2. The PoC deployments set 1.5, see README.)
+- `FAILURE_GROWTH_FACTOR` (default 2.0), `HISTORY_RUNS` (default 10), `PORT` (default 8090).
 
 **`POST /v1/predict`** — request `{"sql": "...", "catalog": "tpcds", "schema": "sf10"}`
 
@@ -143,40 +182,48 @@ Config by environment variables: `DB_URL`, `DB_USER`, `DB_PASSWORD`, `PER_WORKER
 
 Prediction rule, over the last `HISTORY_RUNS` rows for the fingerprint (newest first):
 
-- `S` = rows with `query_state = 'FINISHED'`; `F` = rows whose `error_code` is one of `EXCEEDED_LOCAL_MEMORY_LIMIT`, `EXCEEDED_GLOBAL_MEMORY_LIMIT`, `CLUSTER_OUT_OF_MEMORY`. Other failures are ignored.
+- `S` = rows with `query_state = 'FINISHED'`.
+- `F` = rows whose `error_code` is one of `EXCEEDED_LOCAL_MEMORY_LIMIT`, `EXCEEDED_GLOBAL_MEMORY_LIMIT`, `CLUSTER_OUT_OF_MEMORY`. Ignore other failures.
 - No rows in `S` or `F` → `known: false`, prediction fields `null`.
-- `maxS` = max peak over `S`. A failed run's peak is a *lower bound*.
+- `maxS` = max peak over `S`. The peak of a failed run is a *lower bound*.
 - `F_recent` = rows in `F` with an `end_time` after the newest row in `S`. When `S` is empty, `F_recent` = `F`.
 - If `S` is empty: predicted = `max peak over F × FAILURE_GROWTH_FACTOR`, basis `"memory_failure_growth"`.
 - If `F_recent` is not empty (the query ran out of memory after its last success): predicted = `max(maxS, max peak over F_recent) × FAILURE_GROWTH_FACTOR`, basis `"memory_failure_growth"`.
-- Otherwise predicted = `maxS`, basis `"max_of_last_successful_runs"`. Memory failures older than the last success are ignored.
+- Otherwise predicted = `maxS`, basis `"max_of_last_successful_runs"`. Ignore memory failures that are older than the last success.
 - `runs`, `successfulRuns` and `memoryFailures` count all rows in the window.
 - The same rule applies to `peak_task_user_memory_bytes`.
 - `requiredWorkers = clamp(ceil(predictedPeakUserMemoryBytes × SAFETY_FACTOR / PER_WORKER_MEMORY_BYTES), MIN_WORKERS, MAX_WORKERS)`.
 - Unsupported or unparsable SQL → `{"supported": false, "known": false}`.
 
-**`POST /v1/reservations`** — `{"id": "<uuid>", "predictedBytes": 3400000000, "ttlSeconds": 900}` → `201`. Held in memory.
+**`POST /v1/reservations`** — `{"id": "<uuid>", "predictedBytes": 3400000000, "ttlSeconds": 900}` → `201`. The predictor holds reservations in memory.
 **`DELETE /v1/reservations/{id}`** → `204` (also when the id is unknown).
 **`GET /v1/required-workers`** → `{"workers": 4, "reservations": 1}` where
-`workers = clamp(ceil(sum(predictedBytes of live reservations) × SAFETY_FACTOR / PER_WORKER_MEMORY_BYTES), MIN_WORKERS, MAX_WORKERS)`; with no live reservation it is `MIN_WORKERS`. Expired reservations are removed.
+`workers = clamp(ceil(sum(predictedBytes of live reservations) × SAFETY_FACTOR / PER_WORKER_MEMORY_BYTES), MIN_WORKERS, MAX_WORKERS)`. With no live reservation, `workers` is `MIN_WORKERS`. The predictor deletes expired reservations.
 **`GET /v1/health`** → `200 {"status": "ok"}`.
 
 Implementation: JDK `com.sun.net.httpserver.HttpServer`, plain JDBC, Jackson for JSON. No framework.
 
-Added after review: database errors return `503` (connect timeout 3 s, socket and statement timeout 10 s); at most 16 `/v1/predict` requests run at once, extra ones get `503`.
+Added on 2026-11-12, after a review:
+
+- Database errors return `503` (connect timeout 3 s, socket and statement timeout 10 s).
+- At most 16 `/v1/predict` requests run at once. Extra requests get `503`.
 
 ## Contract 4: gate and scaler (Python 3, `trino` client package)
 
 `gate.py --server http://localhost:8080 --predictor http://localhost:8090 --catalog tpcds --schema sf10 [--user poc] [--no-gate] [--tag k=v ...] (-f query.sql | -e "sql")`
 
-1. `--no-gate`: submit as is.
-2. Otherwise call `/v1/predict`. If `known`: create a reservation and submit with session properties `required_workers_count=<N>` and `required_workers_max_wait_time='10m'`. (Changed during integration: the reservation is made even when the cluster already has enough workers, so the scaler does not remove workers under a running query.)
+1. With `--no-gate`: submit the query as is.
+2. Otherwise call `/v1/predict`. If `known`: create a reservation and submit with session properties `required_workers_count=<N>` and `required_workers_max_wait_time='10m'`. (Changed on 2026-11-12, during integration: the gate makes the reservation also when the cluster already has enough workers. Thus the scaler does not remove workers under a running query.)
 3. Always delete the reservation when the query ends (success or failure).
 4. Print one JSON line: query id, state, error code, prediction, workers before/after, wait time.
 
-`gate.py` is also importable (`run_query(...)`) so the workload driver reuses it.
+`gate.py` is also importable (`run_query(...)`), so the workload driver uses it again.
 
-`scaler.py` (compose only; stands in for KEDA): every 5 s read `/v1/required-workers` and run `docker compose up -d --no-recreate --scale worker=<N>`. It scales up at once and scales down only after the value has been lower for 120 s.
+`scaler.py` (compose only, stands in for KEDA):
+
+- Every 5 s, read `/v1/required-workers` and run `docker compose up -d --no-recreate --scale worker=<N>`.
+- Scale up at once.
+- Scale down only after the value stays lower for 120 s.
 
 ## Contract 5: cluster shape (compose and k8s use the same numbers)
 
@@ -186,32 +233,47 @@ Added after review: database errors return `503` (connect timeout 3 s, socket an
 - `query.max-memory-per-node=1GB`, `query.max-memory=6GB`. Then `PER_WORKER_MEMORY_BYTES=1073741824`.
 - Catalogs: `tpcds` (`tpcds.splits-per-node=4`) and `tpch`.
 - Workload session properties: `join_distribution_type=PARTITIONED`, `task_concurrency=4`.
-- These numbers are a starting point. Calibrate them so that at least one heavy query **fails with a memory error on 2 workers and succeeds on 4–6**. Record the final numbers in `README.md`.
+- These numbers are a starting point. Calibrate them so that at least one heavy query **fails with a memory error on 2 workers and succeeds on 4–6**. The final numbers are in `workload/CALIBRATION.md`.
 
 ## Contract 6: workload and report
 
-- `workload/queries/`: about 12–16 templates from `testing/trino-benchmark-queries/src/main/resources/sql/trino/tpcds` and `.../tpch`, with `{{name}}` placeholders for the literal(s) to vary; `workload.yaml` lists each template, its schema(s) and 3 literal variants. Spread: small (MBs), medium (100s of MB), heavy (GBs). At least 3 heavy ones.
-- `run_workload.py --pass learn|predict`: runs every (template, variant) through `gate.run_query`, tags each query with client tags (`poc_pass`, `poc_template`, `poc_variant`), and appends one JSON line per query to `results/runs.jsonl` (including the prediction made *before* the run).
-- `report.py`: writes `results/REPORT.md` with: hit rate; predicted vs actual peak (ratio distribution: median, p90, worst) for hits; spread of actual peak within one fingerprint across literal variants; table of heavy queries (failed ungated on 2 workers? succeeded gated? workers before/after, wait time); cold-start behavior; list of known limits.
+- `workload/queries/`:
+  - About 12–16 templates from `testing/trino-benchmark-queries/src/main/resources/sql/trino/tpcds` and `.../tpch`.
+  - `{{name}}` placeholders mark the literal(s) to vary.
+  - `workload.yaml` lists each template, its schema(s) and 3 literal variants.
+  - Spread: small (MBs), medium (100s of MB), heavy (GBs). At least 3 heavy ones.
+- `run_workload.py --pass learn|predict`:
+  - Runs every (template, variant) through `gate.run_query`.
+  - Tags each query with client tags (`poc_pass`, `poc_template`, `poc_variant`).
+  - Appends one JSON line per query to `results/runs.jsonl`, including the prediction made *before* the run.
+- `report.py` writes `results/REPORT.md` with:
+  - hit rate
+  - predicted vs actual peak (ratio distribution: median, p90, worst) for hits
+  - spread of actual peak within one fingerprint across literal variants
+  - table of heavy queries (failed ungated on 2 workers? succeeded gated? workers before/after, wait time)
+  - cold-start behavior
+  - list of known limits.
 - Total run time target: under 30 minutes.
 
-## Milestones and checkpoints (coordinator runs these)
+## Milestones
 
-| # | Checkpoint | Proof |
+Each milestone proves one part of the loop. The last column names the evidence.
+
+| # | What it proves | Evidence |
 |---|---|---|
-| M1 | Fingerprint + listener + store build and pass tests | `mvnd … test` output |
-| M2 | Plugin loads in `trinodb/trino:484`; a query produces a row in `query_history` | `SELECT` from PostgreSQL |
-| M3 | Predictor answers `/v1/predict` for a seen and an unseen query | `curl` output |
-| M4 | Compose cluster calibrated: a heavy query fails on 2 workers, passes on 4–6 | query ids + error codes |
-| M5 | Gate + scaler: the same heavy query, gated, scales workers up and passes | `gate.py` JSON line |
-| M6 | Full workload run and `REPORT.md` | report file |
-| M7 | (if confirmed) kind + Helm + KEDA demo of M5 | `kubectl get pods -w` log |
+| M1 | The fingerprint library, the listener and the store build and pass their tests. | `mvnd … test` output |
+| M2 | The plugin loads in `trinodb/trino:484`, and a query produces a row in `query_history`. | `SELECT` from PostgreSQL |
+| M3 | The predictor answers `/v1/predict` for a seen and an unseen query. | `curl` output |
+| M4 | The compose cluster is calibrated: a heavy query fails on 2 workers and passes on 4–6. | query ids + error codes |
+| M5 | Gate + scaler: the same heavy query, gated, scales the workers up and passes. | `gate.py` JSON line |
+| M6 | The full workload runs, and `REPORT.md` shows the results. | report file |
+| M7 | (optional) The kind + Helm + KEDA setup repeats M5. | `kubectl get pods -w` log |
 
-## Rules for every agent
+## Working rules
 
-- Read this file first. Build only what your task and these contracts say. Do not change a contract; if one is wrong or blocks you, stop and report.
-- Work only in your own directories. Commit small, push to remote `fork`. Never push to `origin`. Never open PRs, issues or comments.
-- Never run `mvn install` / `deploy` (the `~/.m2` cache is shared). Use `-Dair.check.skip-all=true` for speed; still keep license headers and run `airstyle:format` on Java you touch.
-- End every commit message with: `Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>`
-- Disk is limited (about 25 GB free). Do not pull large images or generate data beyond what the contracts need. Clean up containers you start.
-- Final report: what was built, commits, exact commands to verify, what was verified by running it and what was not, and open problems.
+- Build only what these contracts say. If a contract is wrong, change this file first.
+- Keep changes inside the PoC directories listed in "Components and file layout".
+- Commit small. Push only to the remote `fork`. Never push to `origin`. Do not open PRs, issues or comments for this PoC.
+- Do not run `mvn install` or `deploy` into a shared `~/.m2` cache.
+- Use `-Dair.check.skip-all=true` for speed. Keep the license headers, and run `airstyle:format` on the Java files that you change.
+- Disk is limited (about 25 GB free). Do not pull large images. Do not generate more data than the contracts need. Remove the containers that you start.

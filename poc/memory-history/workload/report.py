@@ -25,16 +25,16 @@ DEFAULT_DB_URL = "postgresql://memoryhistory:memoryhistory@localhost:15432/memor
 MEMORY_ERRORS = {"EXCEEDED_LOCAL_MEMORY_LIMIT", "EXCEEDED_GLOBAL_MEMORY_LIMIT", "CLUSTER_OUT_OF_MEMORY"}
 
 KNOWN_LIMITS = [
-    "The fingerprint is text-based: the same query on different tables/schemas is a different fingerprint, "
-    "and literals that change the data volume (e.g. a wider date range) share one fingerprint.",
-    "Prediction is the maximum of recent successful runs; a run that failed with a memory error only gives a lower "
-    "bound, so the first gated run after a failure uses `FAILURE_GROWTH_FACTOR` and can still be too small.",
-    "Cluster-wide peak memory is converted to workers by dividing by `query.max-memory-per-node`. "
-    "This assumes memory is spread evenly over workers; skewed partitions or broadcast joins break this.",
-    "Unknown fingerprints (cold start) run without a gate and can fail; they only help the next run.",
-    "Reservations are held in memory by the predictor; a restart forgets them. The scaler scales down after "
-    "120 s without checking whether queries still run on the removed workers.",
-    "The gate is client-side; clients that bypass it get no prediction.",
+    "The fingerprint is text-based. The same query on different tables/schemas gets a different fingerprint. "
+    "Literals that change the data volume (e.g. a wider date range) share one fingerprint.",
+    "The prediction is the maximum of recent successful runs. A run that failed with a memory error only gives a lower "
+    "bound. Thus the first gated run after a failure uses `FAILURE_GROWTH_FACTOR`, and the prediction can still be too small.",
+    "The predictor converts cluster-wide peak memory to workers: it divides by `query.max-memory-per-node`. "
+    "This assumes an even spread of memory over workers. Skewed partitions or broadcast joins break this assumption.",
+    "Queries with unknown fingerprints (cold start) run without a gate and can fail. They only help the next run.",
+    "The predictor holds reservations in memory, and a restart forgets them. The scaler scales down after "
+    "120 s. It does not check whether queries still run on the workers that it removes.",
+    "The gate is client-side. Clients that do not use it get no prediction.",
 ]
 
 
@@ -139,8 +139,8 @@ def build_report(runs, history, source):
     out("")
     unreachable = sum(bool((r.get("prediction") or {}).get("error")) for r in gated)
     if unreachable:
-        out(f"**Warning: the predictor could not be reached for {unreachable} of {len(gated)} gated runs; "
-            "those queries ran without the gate.**")
+        out(f"**Warning: the gate could not connect to the predictor for {unreachable} of {len(gated)} gated runs. "
+            "Those queries ran without the gate.**")
         out("")
     if gated:
         hits = sum(r["_known"] for r in gated)
@@ -166,7 +166,7 @@ def build_report(runs, history, source):
         out(f"- worst: {worst:.2f} ({worst_r.get('template')} {worst_r.get('schema')} v{worst_r.get('variant')}, "
             f"predicted {fmt_bytes(worst_r['_predicted'])}, actual {fmt_bytes(worst_r['_peak'])})")
         out("")
-        out("The same ratio by group. Queries under 100 MB are noisy (a few kB to a few MB) and do not matter for scaling.")
+        out("The same ratio per group. Queries under 100 MB are noisy (a few kB to a few MB). They do not matter for scaling.")
         out("")
         out("| group | n | under-predicted | median | p90 | min | max |")
         out("|---|---|---|---|---|---|---|")
@@ -188,14 +188,14 @@ def build_report(runs, history, source):
                 out(f"| {name} | {len(values)} | {sum(v < 1 for v in values)} | {statistics.median(values):.2f} | "
                     f"{percentile(values, 0.9):.2f} | {min(values):.2f} | {max(values):.2f} |")
         out("")
-        out("These ratios are **in-sample**: every query in the predict passes had already run with the same literals, "
+        out("These ratios are **in-sample**. Every query in the predict passes ran before with the same literals, "
             "and the prediction is the maximum over that history.")
         out("")
         out("### Leave-one-variant-out")
         out("")
-        out("For each FINISHED run with a peak ≥ 100 MB, predict from the runs of the *other* literal variants of the "
-            "same template only (maximum of their peaks). This is a retrospective cross-check, not a replay of the "
-            "predictor: it uses successful runs from all passes (also later ones) and ignores the failure-growth rule.")
+        out("For each FINISHED run with a peak ≥ 100 MB, this check predicts from the runs of the *other* literal variants "
+            "of the same template only (maximum of their peaks). This is a retrospective cross-check, not a replay of the "
+            "predictor. It uses successful runs from all passes (also later ones), and it ignores the failure-growth rule.")
         out("")
         by_template = defaultdict(lambda: defaultdict(list))
         for r in runs:
@@ -218,7 +218,7 @@ def build_report(runs, history, source):
 
     out("## Spread of actual peak within one template (FINISHED runs, all passes)")
     out("")
-    out("Literal variants of one template should share one fingerprint. max/min close to 1 means literals do not change memory much.")
+    out("Literal variants of one template should share one fingerprint. A max/min close to 1 means that literals do not change memory much.")
     out("")
     out("| template | schema | fingerprints | runs | min | max | max/min |")
     out("|---|---|---|---|---|---|---|")
@@ -266,8 +266,8 @@ def build_report(runs, history, source):
     if learn:
         unknown = [r for r in learn if not r["_known"]]
         out(f"- {len(unknown)} of {len(learn)} learn-pass queries had no prediction (unknown fingerprint or no gate) and ran unchanged.")
-        out(f"- Of those, {sum(r['_error'] in MEMORY_ERRORS for r in unknown)} failed with a memory error; "
-            "these failures are recorded and drive the `memory_failure_growth` prediction in the next pass.")
+        out(f"- Of those, {sum(r['_error'] in MEMORY_ERRORS for r in unknown)} failed with a memory error. "
+            "The listener records these failures, and they drive the `memory_failure_growth` prediction in the next pass.")
         seen = set()
         later_known = 0
         for r in sorted(learn, key=lambda r: r.get("ts") or ""):

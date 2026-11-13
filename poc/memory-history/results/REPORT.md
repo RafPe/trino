@@ -24,7 +24,7 @@ Ratio = predicted / actual (1.0 is perfect, < 1 is under-prediction).
 - min: 0.46, max: 47808.67
 - worst: 47808.67 (tpch_q06 sf1 v2, predicted 4.38 MB, actual 96 B)
 
-The same ratio by group. Queries under 100 MB are noisy (a few kB to a few MB) and do not matter for scaling.
+The same ratio per group. Queries under 100 MB are noisy (a few kB to a few MB). They do not matter for scaling.
 
 | group | n | under-predicted | median | p90 | min | max |
 |---|---|---|---|---|---|---|
@@ -32,18 +32,18 @@ The same ratio by group. Queries under 100 MB are noisy (a few kB to a few MB) a
 | actual peak ≥ 100 MB, predicted from a memory failure (peak × growth factor) | 8 | 1 | 2.39 | 2.49 | 0.98 | 2.51 |
 | actual peak < 100 MB | 41 | 9 | 1.03 | 5304.83 | 0.46 | 47808.67 |
 
-These ratios are **in-sample**: every query in the predict passes had already run with the same literals, and the prediction is the maximum over that history.
+These ratios are **in-sample**. Every query in the predict passes ran before with the same literals, and the prediction is the maximum over that history.
 
 ### Leave-one-variant-out
 
-For each FINISHED run with a peak ≥ 100 MB, predict from the runs of the *other* literal variants of the same template only (maximum of their peaks). This is a retrospective cross-check, not a replay of the predictor: it uses successful runs from all passes (also later ones) and ignores the failure-growth rule.
+For each FINISHED run with a peak ≥ 100 MB, this check predicts from the runs of the *other* literal variants of the same template only (maximum of their peaks). This is a retrospective cross-check, not a replay of the predictor. It uses successful runs from all passes (also later ones), and it ignores the failure-growth rule.
 
 - n = 45, under-predicted: 7
 - median: 1.05, p90: 1.08, min: 0.98, max: 1.25
 
 ## Spread of actual peak within one template (FINISHED runs, all passes)
 
-Literal variants of one template should share one fingerprint. max/min close to 1 means literals do not change memory much.
+Literal variants of one template should share one fingerprint. A max/min close to 1 means that literals do not change memory much.
 
 | template | schema | fingerprints | runs | min | max | max/min |
 |---|---|---|---|---|---|---|
@@ -98,14 +98,14 @@ Heavy (template, schema, variant) that failed with a memory error without a gate
 ## Cold start (learn pass)
 
 - 39 of 39 learn-pass queries had no prediction (unknown fingerprint or no gate) and ran unchanged.
-- Of those, 9 failed with a memory error; these failures are recorded and drive the `memory_failure_growth` prediction in the next pass.
+- Of those, 9 failed with a memory error. The listener records these failures, and they drive the `memory_failure_growth` prediction in the next pass.
 - 0 learn-pass queries were already known from an earlier variant of the same template in the same pass.
 
 ## Known limits
 
-- The fingerprint is text-based: the same query on different tables/schemas is a different fingerprint, and literals that change the data volume (e.g. a wider date range) share one fingerprint.
-- Prediction is the maximum of recent successful runs; a run that failed with a memory error only gives a lower bound, so the first gated run after a failure uses `FAILURE_GROWTH_FACTOR` and can still be too small.
-- Cluster-wide peak memory is converted to workers by dividing by `query.max-memory-per-node`. This assumes memory is spread evenly over workers; skewed partitions or broadcast joins break this.
-- Unknown fingerprints (cold start) run without a gate and can fail; they only help the next run.
-- Reservations are held in memory by the predictor; a restart forgets them. The scaler scales down after 120 s without checking whether queries still run on the removed workers.
-- The gate is client-side; clients that bypass it get no prediction.
+- The fingerprint is text-based. The same query on different tables/schemas gets a different fingerprint. Literals that change the data volume (e.g. a wider date range) share one fingerprint.
+- The prediction is the maximum of recent successful runs. A run that failed with a memory error only gives a lower bound. Thus the first gated run after a failure uses `FAILURE_GROWTH_FACTOR`, and the prediction can still be too small.
+- The predictor converts cluster-wide peak memory to workers: it divides by `query.max-memory-per-node`. This assumes an even spread of memory over workers. Skewed partitions or broadcast joins break this assumption.
+- Queries with unknown fingerprints (cold start) run without a gate and can fail. They only help the next run.
+- The predictor holds reservations in memory, and a restart forgets them. The scaler scales down after 120 s. It does not check whether queries still run on the workers that it removes.
+- The gate is client-side. Clients that do not use it get no prediction.

@@ -1,8 +1,10 @@
-# Memory-history PoC on kind + Helm + KEDA (milestone M7 scaffolding)
+# Memory-history PoC on kind + Helm + KEDA (milestone M7)
 
-A local kind cluster in which KEDA scales the Trino worker Deployment to the number served by
-`GET /v1/required-workers` (PLAN.md Contract 3), and Trino holds a query that sets
-`required_workers_count` until that many workers have joined.
+This setup is a local kind cluster with two parts:
+
+- KEDA scales the Trino worker Deployment to the number that `GET /v1/required-workers` returns
+  (PLAN.md Contract 3).
+- Trino holds a query that sets `required_workers_count` until that number of workers joins.
 
 All scripts use only the kind cluster **`mhpoc`** and the kubeconfig file `k8s/.kubeconfig`
 (git-ignored). They never read or change the default kubeconfig. Do the same when you run
@@ -16,13 +18,15 @@ commands by hand: `kubectl --kubeconfig poc/memory-history/k8s/.kubeconfig -n tr
 | `env.sh` | Shared settings (names, chart versions, image variables) and the `kc` / `hm` wrappers that pin `--kubeconfig`. |
 | `up.sh` | Creates the cluster (node image `kindest/node:v1.34.0`), loads images, installs KEDA, PostgreSQL, the predictor or the stub, and Trino. Safe to run again. |
 | `down.sh` | Deletes cluster `mhpoc` only. |
-| `demo.sh` | `status`, `set N`, `scale-up`, `scale-down`, `wait-query`, `stub-all` (the stub checks below), `gate` (placeholder for the real-image demo). |
+| `demo.sh` | `status`, `set N`, `scale-up`, `scale-down`, `wait-query`, `stub-all` (the stub checks below), `gate` (placeholder. The real-image demo is `demo-gate.sh`). |
 | `values-trino.yaml` | Values for the Trino chart: Contract 5 shape, KEDA `metrics-api` trigger, HPA behavior, graceful shutdown. |
 | `values-listener.yaml` | Optional overlay that enables the `memory-history` event listener on the coordinator only. |
 | `manifests/postgres.yaml` | PostgreSQL 17 (`postgres:17-alpine`), database `memory_history`, user/password `trino`/`trino`, emptyDir. |
-| `manifests/predictor-service.yaml` | Service `predictor:8090`. It selects `app.kubernetes.io/name=predictor`, so it matches either the stub or the real predictor. |
+| `manifests/predictor-service.yaml` | Service `predictor:8090`. It selects `app.kubernetes.io/name=predictor`, so it matches the stub or the real predictor. |
 | `manifests/predictor-stub.yaml` | Stub (`python:3.13-alpine`, 18 MB). Serves `{"workers": N, "reservations": 0}`. N comes from ConfigMap `predictor-stub`, key `workers`. |
 | `manifests/predictor.yaml` | Real predictor Deployment. `${PREDICTOR_IMAGE}`, env per Contract 3. Not run yet. |
+
+The stub is a test tool. It returns a fixed worker count that I set by hand. It is not the real predictor.
 
 Versions: Trino chart **1.45.0** (appVersion 484), KEDA chart **2.21.0** (KEDA 2.21.0),
 Kubernetes 1.34.0 (kind v0.33.0), Helm 4.3.1. `up.sh` installs both charts with
@@ -45,13 +49,16 @@ PREDICTOR_IMAGE=<predictor image:tag> LISTENER=1 ./up.sh
 ./down.sh                   # deletes cluster mhpoc only
 ```
 
-You can also run `up.sh` against a cluster that already exists. It loads only images whose
-local ID changed, deletes the stub when `PREDICTOR_IMAGE` is set (and the real predictor when
-it is not), and runs `helm upgrade` on Trino. The Trino pods restart when the image or the
-config changes. A second run with nothing changed took 20 s and restarted no pods. Each run
-also re-applies `predictor-stub.yaml`, which resets the stub value to 2.
+You can also run `up.sh` on a cluster that already exists. In that case, `up.sh` does these steps:
 
-Disk: Docker's data root is `/data/docker`, not `/`. Inside the kind node, the Trino image
+1. It loads only the images whose local ID changed.
+2. It deletes the stub when `PREDICTOR_IMAGE` is set, and the real predictor when it is not set.
+3. It runs `helm upgrade` on Trino. The Trino pods restart when the image or the config changes.
+4. It applies `predictor-stub.yaml` again, which resets the stub value to 2.
+
+A second run with no changes took 20 s and restarted no pods.
+
+Disk: the Docker data root is `/data/docker`, not `/`. Inside the kind node, the Trino image
 takes about 1 GB compressed and about 2.4 GB unpacked.
 
 ## Configuration notes
@@ -64,8 +71,8 @@ takes about 1 GB compressed and about 2.4 GB unpacked.
 - **KEDA trigger:** `metrics-api`, `url: http://predictor.{{ .Release.Namespace }}.svc:8090/v1/required-workers`,
   `valueLocation: workers`, `targetValue: "1"`, `metricType: AverageValue`. For an External
   metric with an `AverageValue` target, the HPA computes `desired = ceil(metric / target)`.
-  With target 1 this gives `replicas == workers`, which the runs below confirm (2 → 4 → 2,
-  and the HPA reports `1/1 (avg)`). No other setting is needed.
+  With target 1 this gives `replicas == workers`. The runs below show this (2 → 4 → 2,
+  and the HPA reports `1/1 (avg)`). No other setting is necessary.
 - **HPA behavior** (`server.keda.advanced.horizontalPodAutoscalerConfig.behavior`): scale up
   with no stabilization window, at most 10 Pods per 15 s. Scale down with a 120 s
   stabilization window, then 100 % per 15 s.
@@ -74,29 +81,29 @@ takes about 1 GB compressed and about 2.4 GB unpacked.
   queries the metric directly through the KEDA metrics server every 15 s (the default
   `--horizontal-pod-autoscaler-sync-period`). This interval sets the scale-up latency.
 - **Graceful shutdown:** `worker.gracefulShutdown` is on, with `gracePeriodSeconds: 30` and
-  `terminationGracePeriodSeconds: 300` (the chart requires at least 2 × the grace period; the
-  extra time lets long tasks drain). The coordinator gets `shutdown.grace-period=30s` too.
-  A removed worker turns inactive in Trino within a few seconds and exits about 60 s later
-  (2 × 30 s).
-- **Event listener (`values-listener.yaml`):** the chart's `eventListenerProperties` would
-  write `event-listener.properties` on the workers too. Contract 2 says the listener runs on
-  the coordinator only, so the overlay writes `memory-history-listener.properties` through
+  `terminationGracePeriodSeconds: 300`. The chart requires at least 2 × the grace period. The
+  extra time lets long tasks drain. The coordinator gets `shutdown.grace-period=30s` too.
+  A worker that scale-down removes becomes inactive in Trino within a few seconds. It exits about
+  60 s later (2 × 30 s).
+- **Event listener (`values-listener.yaml`):** the `eventListenerProperties` value of the chart
+  would write `event-listener.properties` on the workers too. Contract 2 says the listener runs on
+  the coordinator only. Thus the overlay writes `memory-history-listener.properties` through
   `coordinator.additionalConfigFiles` and sets `event-listener.config-files` in
   `server.coordinatorExtraConfig`. The URL is
   `jdbc:postgresql://postgres.<ns>.svc:5432/memory_history` with user/password `trino`/`trino`.
   Do not use the overlay with the stock image (it has no such plugin).
 - **Image loading:** `kind load docker-image` fails for multi-arch images when Docker uses the
-  containerd image store (`ctr: content digest ... not found`). `up.sh` streams
-  `docker save --platform linux/<arch>` into the node's `ctr images import` instead. It
-  labels the node image with the local image ID so that later runs skip unchanged images.
-  `imagePullPolicy: Never` everywhere, so nothing is pulled from a registry inside the cluster
+  containerd image store (`ctr: content digest ... not found`). Instead, `up.sh` streams
+  `docker save --platform linux/<arch>` into `ctr images import` on the node. It
+  labels the node image with the local image ID, so later runs skip unchanged images.
+  All manifests use `imagePullPolicy: Never`. Thus the cluster pulls nothing from a registry
   except the KEDA images (about 100 MB).
 
-## Verified evidence (stock `trinodb/trino:484` + stub, 2026-11-12, arm64)
+## Measured results (stock `trinodb/trino:484` + stub, 2026-11-12, arm64)
 
-Timings come from `demo.sh`, which polls once per second. The time starts at
-`kubectl patch configmap predictor-stub`. The first line includes the kubelet's ConfigMap
-propagation delay (up to about 10 s), which the real predictor does not have.
+The timings come from `demo.sh`, which polls once per second. The time starts at
+`kubectl patch configmap predictor-stub`. The first line includes the ConfigMap
+propagation delay of the kubelet (up to about 10 s). The real predictor does not have this delay.
 
 **(a) Trino with 2 workers** (after `up.sh`, about 2.5 min from a cold start, including 1 min to import the image):
 ```
@@ -118,8 +125,8 @@ horizontalpodautoscaler.autoscaling/keda-hpa-trino-worker   Deployment/trino-wor
 12:58:29 active workers in Trino = 4 after 27 s
 HPA event: New size: 4; reason: external metric s0-metric-api-workers(...) above target
 ```
-Metric change to HPA decision: about 2 s here (the HPA syncs every 15 s, so it can take up to
-15 s). New pods to active Trino workers: about 19 s (JVM start plus node announcement).
+From the metric change to the HPA decision: about 2 s here. The HPA syncs every 15 s, so this step can
+take up to 15 s. From new pods to active Trino workers: about 19 s (JVM start plus node announcement).
 
 **(c) Query waits for workers** (`./demo.sh wait-query 4`, with 2 workers and the stub at 2):
 ```
@@ -139,21 +146,31 @@ run 1: predictor=2 after 10 s; HPA replicas=2 after 124 s; non-terminating pods=
 run 2: predictor=2 after 6 s;  HPA replicas=2 after 122 s; non-terminating pods=2 after 126 s;
        active in Trino=2 after 134 s; terminated pods gone after 183 s
 ```
-The coordinator log has 0 `ERROR` lines. The worker's `PUT /v1/info/state "SHUTTING_DOWN"`
+The coordinator log has 0 `ERROR` lines. The `PUT /v1/info/state "SHUTTING_DOWN"` request of the worker
 returned `200 OK`.
 
-**Known warning:** each removed worker gets an event `FailedPreStopHook` (`exited with 137`).
-The chart's preStop hook sends the shutdown request and then runs `tail --pid=1 -f /dev/null`.
-When Trino finishes its graceful shutdown and exits, the runtime kills the hook, and the kubelet
-reports that kill as a failure. The shutdown itself succeeds: HTTP 200, the worker leaves the
-active set, and the pod exits about 60 s later instead of at the 300 s SIGKILL. This is chart
-behavior; you cannot change it without replacing `worker.lifecycle`, which the chart forbids
-together with `gracefulShutdown`.
+**Known warning:** each worker that scale-down removes gets a `FailedPreStopHook` event (`exited with 137`).
+The cause:
 
-## Not verified yet
+1. The preStop hook of the chart sends the shutdown request and then runs `tail --pid=1 -f /dev/null`.
+2. Trino finishes its graceful shutdown and exits.
+3. The runtime kills the hook, and the kubelet reports that kill as a failure.
 
-- The real images: `trino-memory-history:poc` with `LISTENER=1`, and the predictor
-  Deployment (`manifests/predictor.yaml`). Their manifests render, but they have not run.
-- The gate-driven flow (`demo.sh gate` is a placeholder).
-- Scaling to 6 workers and memory-heavy queries on kind. All pods share the host's memory:
+The shutdown itself succeeds. The request returns HTTP 200 and the worker leaves the active set. The pod
+exits about 60 s later, not at the 300 s SIGKILL. This is chart behavior. You cannot change it without a
+replacement of `worker.lifecycle`, and the chart forbids that together with `gracefulShutdown`.
+
+## Checked later with the real images (2026-11-12)
+
+After these notes, I ran the real images on this cluster (`trino-memory-history:poc` with `LISTENER=1`,
+and the real predictor). The flow through the gate is in `demo-gate.sh`. The results are in
+[../README.md](../README.md), section "On Kubernetes".
+
+- TPC-H q21 at sf5 fails without the gate on 2 workers.
+- Through the gate, KEDA scales the workers from 2 to 6. Trino holds the query for about 30 s, then the query finishes.
+
+## Not checked yet
+
+- `demo.sh gate` is a placeholder. Use `demo-gate.sh`.
+- Scale-down while queries run. All pods share the memory of the host:
   7 Trino pods × 6Gi limit = 42Gi, which fits on this host.
