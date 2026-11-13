@@ -1,0 +1,19 @@
+# Phase 2 only (contract L3). Not applied by up.sh.
+# Use it on top of values-gateway.yaml to send each new query to the gate:
+#   GATEWAY_EXTERNAL=1 ./up.sh
+# Helm merges these maps into `config` of values-gateway.yaml. Nothing else changes.
+
+config:
+  serverConfig:
+    # The default is 5 minutes.
+    router.http-client.request-timeout: 1s
+  routingRules:
+    rulesEngineEnabled: true
+    rulesType: EXTERNAL
+    rulesExternalConfiguration:
+      urlPath: http://gate.lab.svc:8095/gateway/route
+      # The key must be present, so all client headers reach the gate.
+      excludeHeaders: []
+      propagateErrors: false
+  requestAnalyzerConfig:
+    analyzeRequest: true

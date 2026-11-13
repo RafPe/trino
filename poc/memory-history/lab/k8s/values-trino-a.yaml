@@ -1,0 +1,25 @@
+# Cluster A (release trino-a): predictor-a and database history_a.
+
+# Resource names trino-a, trino-a-coordinator, trino-a-worker (the chart default is trino-a-trino).
+fullnameOverride: trino-a
+
+server:
+  keda:
+    # For an External metric with an AverageValue target, the HPA sets
+    # replicas = ceil(metric / target). Target 1 gives replicas == workers.
+    triggers:
+      - type: metrics-api
+        metricType: AverageValue
+        metadata:
+          url: "http://predictor-a.{{ .Release.Namespace }}.svc:8090/v1/required-workers"
+          format: json
+          valueLocation: workers
+          targetValue: "1"
+
+coordinator:
+  additionalConfigFiles:
+    memory-history-listener.properties: |
+      event-listener.name=memory-history
+      memory-history.db.url=jdbc:postgresql://postgres.{{ .Release.Namespace }}.svc:5432/history_a
+      memory-history.db.user=trino
+      memory-history.db.password=trino

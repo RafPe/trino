@@ -1,0 +1,41 @@
+# Trino Gateway (chart `trino-gateway` 1.22.0 = Trino Gateway 22), release `gateway`.
+# Phase 1: no routing rules. The routing group comes from the X-Trino-Routing-Group
+# header, and requests without it go to group `a`.
+# Phase 2 adds values-gateway-external.yaml on top of this file (external routing to the gate).
+# `config` is written as-is to /etc/trino-gateway/config.yaml.
+
+image:
+  repository: trinodb/trino-gateway
+  tag: "22"
+  # up.sh loads the image into the kind node.
+  pullPolicy: Never
+
+serviceName: gateway
+
+config:
+  serverConfig:
+    node.environment: lab
+    http-server.http.enabled: true
+    http-server.http.port: 8080
+  dataStore:
+    jdbcUrl: jdbc:postgresql://postgres.lab.svc:5432/gateway
+    user: trino
+    password: trino
+    driver: org.postgresql.Driver
+  clusterStatsConfiguration:
+    monitorType: INFO_API
+  monitor:
+    # Health check of the backends. The default is 1 minute.
+    taskDelay: 10s
+  routing:
+    defaultRoutingGroup: a
+  routingRules:
+    rulesEngineEnabled: false
+
+# The chart starts the JVM with MaxRAMPercentage=80, so the heap follows the memory limit.
+resources:
+  requests:
+    cpu: 250m
+    memory: 1Gi
+  limits:
+    memory: 1Gi

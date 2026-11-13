@@ -1,0 +1,91 @@
+# Shared values for both Trino releases (chart `trino` 1.45.0 = Trino 484).
+# The memory numbers are the same as in the PoC (poc/memory-history/k8s/values-trino.yaml).
+# values-trino-a.yaml and values-trino-b.yaml add the KEDA trigger and the history database.
+
+image:
+  repository: trino-memory-history
+  tag: poc
+  # up.sh loads the images into the kind node. Never pull from a registry.
+  pullPolicy: Never
+
+server:
+  workers: 2
+  config:
+    query:
+      maxMemory: "6GB"
+  # The listener runs on the coordinator only, so its file comes from
+  # coordinator.additionalConfigFiles (per-cluster values), not eventListenerProperties.
+  # Trino Gateway sends X-Forwarded-* headers. Trino uses them for nextUri.
+  coordinatorExtraConfig: |
+    event-listener.config-files=/etc/trino/memory-history-listener.properties
+    http-server.process-forwarded=true
+  keda:
+    enabled: true
+    pollingInterval: 5
+    cooldownPeriod: 300
+    minReplicaCount: 2
+    maxReplicaCount: 6
+    # server.keda.triggers is in the per-cluster values file.
+    advanced:
+      horizontalPodAutoscalerConfig:
+        behavior:
+          scaleUp:
+            stabilizationWindowSeconds: 0
+            selectPolicy: Max
+            policies:
+              - type: Pods
+                value: 10
+                periodSeconds: 15
+          scaleDown:
+            stabilizationWindowSeconds: 120
+            selectPolicy: Max
+            policies:
+              - type: Percent
+                value: 100
+                periodSeconds: 15
+
+catalogs:
+  tpch: |
+    connector.name=tpch
+    tpch.splits-per-node=4
+  tpcds: |
+    connector.name=tpcds
+    tpcds.splits-per-node=4
+
+coordinator:
+  jvm:
+    maxHeapSize: "4G"
+    minHeapSize: "4G"
+  config:
+    nodeScheduler:
+      includeCoordinator: false
+    query:
+      maxMemoryPerNode: "1GB"
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "5Gi"
+    limits:
+      memory: "6Gi"
+
+worker:
+  jvm:
+    maxHeapSize: "4G"
+    minHeapSize: "4G"
+  config:
+    query:
+      maxMemoryPerNode: "1GB"
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "5Gi"
+    limits:
+      memory: "6Gi"
+  # Graceful shutdown: the worker stops taking new tasks, waits gracePeriodSeconds,
+  # drains running tasks, waits gracePeriodSeconds again. The chart requires
+  # terminationGracePeriodSeconds >= 2 x gracePeriodSeconds.
+  gracefulShutdown:
+    enabled: true
+    gracePeriodSeconds: 30
+    user: admin
+  terminationGracePeriodSeconds: 300

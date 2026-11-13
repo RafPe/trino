@@ -1,0 +1,77 @@
+# PostgreSQL for the lab. Three databases: history_a, history_b (one history database for
+# each Trino cluster) and gateway (Trino Gateway). User and password: trino / trino.
+# The data is not persisted (emptyDir), so a new pod starts with empty databases.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+data:
+  10-databases.sql: |
+    CREATE DATABASE history_a;
+    CREATE DATABASE history_b;
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  labels:
+    app.kubernetes.io/name: postgres
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          imagePullPolicy: Never
+          env:
+            - name: POSTGRES_DB
+              value: gateway
+            - name: POSTGRES_USER
+              value: trino
+            - name: POSTGRES_PASSWORD
+              value: trino
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["psql", "-U", "trino", "-d", "history_b", "-c", "SELECT 1"]
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: init
+          configMap:
+            name: postgres-init
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres

@@ -1,0 +1,10 @@
+# Single-node kind cluster for the lab. up.sh sets the name (mhlab) and the kubeconfig file.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      # ConfigMap changes reach the pods in about 10 s instead of 60-90 s.
+      - |
+        kind: KubeletConfiguration
+        syncFrequency: 10s

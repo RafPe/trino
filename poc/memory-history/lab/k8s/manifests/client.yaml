@@ -1,0 +1,30 @@
+# Client pod for tests inside the cluster. It uses the Trino image (already on the node)
+# for curl and the trino CLI. It runs no Trino server.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: client
+  labels:
+    app.kubernetes.io/name: client
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: client
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: client
+    spec:
+      terminationGracePeriodSeconds: 1
+      containers:
+        - name: client
+          image: trino-memory-history:poc
+          imagePullPolicy: Never
+          command: ["sleep", "infinity"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 512Mi

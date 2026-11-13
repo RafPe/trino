@@ -1,0 +1,71 @@
+# Predictor of one cluster. up.sh replaces ${CLUSTER} (a or b) and applies this file once
+# for each cluster: Deployment and Service predictor-<c>, database history_<c>.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: predictor-${CLUSTER}
+  labels:
+    app.kubernetes.io/name: predictor
+    app.kubernetes.io/instance: predictor-${CLUSTER}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: predictor
+      app.kubernetes.io/instance: predictor-${CLUSTER}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: predictor
+        app.kubernetes.io/instance: predictor-${CLUSTER}
+    spec:
+      containers:
+        - name: predictor
+          image: trino-memory-history-predictor:poc
+          imagePullPolicy: Never
+          env:
+            - name: DB_URL
+              value: jdbc:postgresql://postgres:5432/history_${CLUSTER}
+            - name: DB_USER
+              value: trino
+            - name: DB_PASSWORD
+              value: trino
+            # query.max-memory-per-node = 1GB (values-trino.yaml)
+            - name: PER_WORKER_MEMORY_BYTES
+              value: "1073741824"
+            # Keep equal to server.keda.minReplicaCount and maxReplicaCount.
+            - name: MIN_WORKERS
+              value: "2"
+            - name: MAX_WORKERS
+              value: "6"
+            - name: SAFETY_FACTOR
+              value: "1.5"
+            - name: PORT
+              value: "8090"
+          ports:
+            - name: http
+              containerPort: 8090
+          readinessProbe:
+            httpGet:
+              path: /v1/health
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: predictor-${CLUSTER}
+spec:
+  selector:
+    app.kubernetes.io/name: predictor
+    app.kubernetes.io/instance: predictor-${CLUSTER}
+  ports:
+    - name: http
+      port: 8090
+      targetPort: http

@@ -87,7 +87,7 @@ Configuration (environment): `GATE_GROUPS` (for example `a=http://predictor-a:80
 
 ## Contract L3: Trino Gateway
 
-- `routingRules.rulesType: EXTERNAL`, `rulesExternalConfiguration.urlPath: http://gate:8095/gateway/route`, `excludeHeaders: []` (the key must be present), `propagateErrors: false`.
+- `routingRules.rulesEngineEnabled: true`, `routingRules.rulesType: EXTERNAL`, `rulesExternalConfiguration.urlPath: http://gate:8095/gateway/route`, `excludeHeaders: []` (the key must be present), `propagateErrors: false`.
 - `requestAnalyzerConfig.analyzeRequest: true`.
 - `serverConfig: router.http-client.request-timeout: 1s`. The default is 5 minutes.
 - Backends: cluster A in routing group `a`, cluster B in routing group `b`. Register them with `POST /gateway/backend/modify/add`.
