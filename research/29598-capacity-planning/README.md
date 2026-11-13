@@ -10,6 +10,16 @@ All `file:line` references point at that commit.
 
 I used AI tools to speed up the code research. I checked the main findings against the source code myself.
 
+## Where to look first
+
+- **The design and the decisions:** [00-design-and-decisions.md](00-design-and-decisions.md).
+- **The proof of concept (code, how to run it, results):** branch
+  [`RafPe/memory-history-poc`](https://github.com/RafPe/trino/blob/RafPe/memory-history-poc/poc/memory-history/README.md).
+- **Upstream discussion:** [trinodb/trino#29598](https://github.com/trinodb/trino/issues/29598) and
+  [trinodb/trino#32089](https://github.com/trinodb/trino/issues/32089).
+
+The work continues. The status list at the end of this file shows what is complete and what is open.
+
 ## Contents
 
 | File | What it holds |
