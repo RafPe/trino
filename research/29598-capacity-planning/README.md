@@ -20,6 +20,7 @@ All `file:line` references point at that commit.
 | [reports/05-codex-structural-review.md](reports/05-codex-structural-review.md) | Independent Codex review (verdict: structurally flawed as proposed) and a comparison with our findings |
 | [06-upstream-overlap.md](06-upstream-overlap.md) | Upstream issues/PRs that overlap our work, and bundling recommendations (2026-11-11) |
 | [07-prior-art-memory-prediction.md](07-prior-art-memory-prediction.md) | Prior art on predicting query memory: PrestoDB HBO, industry, academic, Trino internals (2026-11-11) |
+| [08-karpenter-nodeclaim-analysis.md](08-karpenter-nodeclaim-analysis.md) | Should the PoC create Karpenter NodeClaims directly? Timing, risks, better options (2026-11-13) |
 | [reports/](reports/) | Raw reports from the four Opus research agents (lifecycle, cost estimate, ClusterSizeMonitor/scheduling, config/tests/docs) |
 
 ## Summary
