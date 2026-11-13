@@ -8,6 +8,7 @@ Trino workers **before** the query runs. It does not change Trino core.
 - Cluster calibration: [workload/CALIBRATION.md](workload/CALIBRATION.md)
 - Kubernetes details: [k8s/README-k8s.md](k8s/README-k8s.md)
 - Install only the listener on an existing Trino, to collect data: [INSTALL-existing-cluster.md](INSTALL-existing-cluster.md)
+- Lab for a server-side gate (Trino Gateway, Envoy, two clusters) and its cost: [lab/README.md](lab/README.md)
 
 ## How it works
 
