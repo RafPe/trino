@@ -1,4 +1,4 @@
-# Shared settings for the kind lab, sourced by up.sh, down.sh and status.sh.
+# Shared settings for the kind lab, sourced by the scripts in this folder.
 # Every kubectl and helm call goes through kc and hm. They pin the kubeconfig file of
 # this lab, so the default kubeconfig and its current context are never read or changed.
 
@@ -14,6 +14,9 @@ TRINO_IMAGE="${TRINO_IMAGE_REPO}:${TRINO_IMAGE_TAG}"
 PREDICTOR_IMAGE="trino-memory-history-predictor:poc"
 POSTGRES_IMAGE="postgres:17-alpine"
 GATEWAY_IMAGE="trinodb/trino-gateway:22"
+GATE_IMAGE="trino-memory-history-gate:lab"
+ENVOY_IMAGE="envoyproxy/envoy:v1.35.3"
+PYTHON_IMAGE="python:3.13-alpine"
 
 CHART_REPO="https://trinodb.github.io/charts"
 TRINO_CHART_VERSION="1.45.0"   # appVersion 484
@@ -52,3 +55,8 @@ client_curl() {
 }
 
 log() { echo "$(date -u +%H:%M:%S) $*"; }
+
+# Run a command in the bench pod (python:3.13-alpine with the bench code in /bench).
+bench_exec() {
+    kc -n "${NAMESPACE}" exec -i deploy/bench -c bench -- "$@"
+}

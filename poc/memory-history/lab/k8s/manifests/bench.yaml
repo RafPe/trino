@@ -1,0 +1,53 @@
+# Bench pod: Python 3.13 (standard library only, as the bench needs) with the code of
+# ../../bench and the helpers of this folder in /bench (ConfigMap bench-code, made by up.sh).
+# Results go to /results (emptyDir). bench-kind.sh copies them out.
+# up.sh replaces ${CODE_SHA}, so changed code restarts the pod.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench
+  labels:
+    app.kubernetes.io/name: bench
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bench
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bench
+      annotations:
+        mhlab/code-sha: "${CODE_SHA}"
+    spec:
+      terminationGracePeriodSeconds: 1
+      containers:
+        - name: bench
+          image: python:3.13-alpine
+          imagePullPolicy: Never
+          command: ["sleep", "infinity"]
+          env:
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          resources:
+            requests:
+              cpu: 500m
+              memory: 128Mi
+            limits:
+              memory: 2Gi
+          volumeMounts:
+            - name: code
+              mountPath: /bench
+              readOnly: true
+            - name: results
+              mountPath: /results
+      volumes:
+        - name: code
+          configMap:
+            name: bench-code
+        - name: results
+          emptyDir: {}

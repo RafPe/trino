@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Show the state of the lab: pods, KEDA objects, active workers, predictor values, backends.
+# Show the state of the lab: pods, KEDA objects, active workers, predictor values, backends, gate counters.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
@@ -16,4 +16,7 @@ for c in "${CLUSTERS[@]}"; do
         "predictor-${c} $(client_curl "http://predictor-${c}:8090/v1/required-workers" || echo '?')"
 done
 echo
-echo "gateway backends: $(client_curl http://gateway:8080/gateway/backend/all || echo '?')"
+for gw in gateway gateway-plain; do
+    echo "${gw} backends: $(client_curl "http://${gw}:8080/gateway/backend/all" || echo '?')"
+done
+echo "gate stats: $(client_curl http://gate:8095/stats || echo '?')"

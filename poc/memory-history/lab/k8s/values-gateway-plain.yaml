@@ -1,0 +1,11 @@
+# Release `gateway-plain`: Trino Gateway without routing rules (baseline of the bench).
+# Use on top of values-gateway.yaml. It routes by X-Trino-Routing-Group, default group a.
+# It has its own database (gateway_plain), so the two gateways never share backend rows,
+# query-id rows or schema migrations. up.sh creates the database and registers the backends
+# in each gateway.
+
+serviceName: gateway-plain
+
+config:
+  dataStore:
+    jdbcUrl: jdbc:postgresql://postgres.lab.svc:5432/gateway_plain

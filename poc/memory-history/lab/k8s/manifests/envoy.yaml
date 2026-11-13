@@ -1,0 +1,75 @@
+# Envoy (contract L4): three listeners to cluster A. The configuration is the ConfigMap
+# envoy-config, made by up.sh from ../envoy.yaml. up.sh replaces ${CONFIG_SHA}, so a changed
+# configuration restarts the pod.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: envoy
+  labels:
+    app.kubernetes.io/name: envoy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: envoy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: envoy
+      annotations:
+        mhlab/config-sha: "${CONFIG_SHA}"
+    spec:
+      terminationGracePeriodSeconds: 5
+      containers:
+        - name: envoy
+          image: envoyproxy/envoy:v1.35.3
+          imagePullPolicy: Never
+          command: ["envoy", "-c", "/etc/envoy/envoy.yaml", "--concurrency", "4", "--log-level", "warn"]
+          ports:
+            - name: gated
+              containerPort: 10000
+            - name: plain
+              containerPort: 10001
+            - name: first-only
+              containerPort: 10002
+            - name: admin
+              containerPort: 9901
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: admin
+            periodSeconds: 2
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/envoy
+      volumes:
+        - name: config
+          configMap:
+            name: envoy-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: envoy
+spec:
+  selector:
+    app.kubernetes.io/name: envoy
+  ports:
+    - name: gated
+      port: 10000
+      targetPort: gated
+    - name: plain
+      port: 10001
+      targetPort: plain
+    - name: first-only
+      port: 10002
+      targetPort: first-only
+    - name: admin
+      port: 9901
+      targetPort: admin

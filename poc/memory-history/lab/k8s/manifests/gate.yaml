@@ -1,0 +1,61 @@
+# Gate (contract L2): the decision service for Trino Gateway and Envoy.
+# Group a asks predictor-a, group b asks predictor-b. Service gate:8095.
+# For the W4 bench test, GATE_DELAY_MS is changed with `kubectl set env` and set back to 0 after it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gate
+  labels:
+    app.kubernetes.io/name: gate
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gate
+    spec:
+      terminationGracePeriodSeconds: 5
+      containers:
+        - name: gate
+          image: trino-memory-history-gate:lab
+          imagePullPolicy: Never
+          env:
+            - name: GATE_GROUPS
+              value: a=http://predictor-a:8090,b=http://predictor-b:8090
+            - name: GATE_DEFAULT_GROUP
+              value: a
+            - name: GATE_PREDICTOR_TIMEOUT_MS
+              value: "200"
+            - name: GATE_DELAY_MS
+              value: "0"
+            - name: PORT
+              value: "8095"
+          ports:
+            - name: http
+              containerPort: 8095
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+          resources:
+            requests:
+              cpu: 100m
+              memory: 32Mi
+            limits:
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gate
+spec:
+  selector:
+    app.kubernetes.io/name: gate
+  ports:
+    - name: http
+      port: 8095
+      targetPort: http
