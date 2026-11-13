@@ -1,0 +1,210 @@
+# Lab: two Trino clusters behind Trino Gateway and Envoy, with the gate (see ../LAB-PLAN.md).
+# Start with ./up.sh, stop with ./down.sh. Ports are in .env.
+name: mhlab
+
+x-trino-env: &trino-env
+  QUERY_MAX_MEMORY_PER_NODE: ${QUERY_MAX_MEMORY_PER_NODE}
+  QUERY_MAX_MEMORY: ${QUERY_MAX_MEMORY}
+
+x-coordinator: &coordinator
+  image: ${TRINO_IMAGE}
+  environment: *trino-env
+  mem_limit: 6g
+  depends_on:
+    postgres:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "/usr/lib/trino/bin/health-check"]
+    interval: 5s
+    timeout: 5s
+    retries: 60
+    start_period: 10s
+
+x-worker: &worker
+  image: ${TRINO_IMAGE}
+  mem_limit: 6g
+  deploy:
+    replicas: 2
+
+x-predictor: &predictor
+  image: ${PREDICTOR_IMAGE}
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: memoryhistory
+      POSTGRES_USER: memoryhistory
+      POSTGRES_PASSWORD: memoryhistory
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init-databases.sql:/docker-entrypoint-initdb.d/10-databases.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U memoryhistory -d gateway"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Cluster A
+  coordinator-a:
+    <<: *coordinator
+    hostname: coordinator-a
+    ports:
+      - "127.0.0.1:${COORDINATOR_A_PORT}:8080"
+    volumes:
+      - ./etc/coordinator.properties:/etc/trino/config.properties:ro
+      - ./etc/event-listener-a.properties:/etc/trino/event-listener.properties:ro
+      - ../../compose/etc/jvm.config:/etc/trino/jvm.config:ro
+      - ../../compose/etc/node.properties:/etc/trino/node.properties:ro
+      - ../../compose/etc/catalog:/etc/trino/catalog:ro
+
+  worker-a:
+    <<: *worker
+    environment:
+      <<: *trino-env
+      DISCOVERY_URI: http://coordinator-a:8080
+    volumes:
+      - ./etc/worker.properties:/etc/trino/config.properties:ro
+      - ../../compose/etc/jvm.config:/etc/trino/jvm.config:ro
+      - ../../compose/etc/node.properties:/etc/trino/node.properties:ro
+      - ../../compose/etc/catalog:/etc/trino/catalog:ro
+    depends_on:
+      coordinator-a:
+        condition: service_started
+
+  predictor-a:
+    <<: *predictor
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/history_a
+      DB_USER: memoryhistory
+      DB_PASSWORD: memoryhistory
+      PER_WORKER_MEMORY_BYTES: ${PER_WORKER_MEMORY_BYTES}
+      MIN_WORKERS: ${MIN_WORKERS}
+      MAX_WORKERS: ${MAX_WORKERS}
+      SAFETY_FACTOR: ${SAFETY_FACTOR}
+      PORT: "8090"
+    ports:
+      - "127.0.0.1:${PREDICTOR_A_PORT}:8090"
+
+  # Cluster B
+  coordinator-b:
+    <<: *coordinator
+    hostname: coordinator-b
+    ports:
+      - "127.0.0.1:${COORDINATOR_B_PORT}:8080"
+    volumes:
+      - ./etc/coordinator.properties:/etc/trino/config.properties:ro
+      - ./etc/event-listener-b.properties:/etc/trino/event-listener.properties:ro
+      - ../../compose/etc/jvm.config:/etc/trino/jvm.config:ro
+      - ../../compose/etc/node.properties:/etc/trino/node.properties:ro
+      - ../../compose/etc/catalog:/etc/trino/catalog:ro
+
+  worker-b:
+    <<: *worker
+    environment:
+      <<: *trino-env
+      DISCOVERY_URI: http://coordinator-b:8080
+    volumes:
+      - ./etc/worker.properties:/etc/trino/config.properties:ro
+      - ../../compose/etc/jvm.config:/etc/trino/jvm.config:ro
+      - ../../compose/etc/node.properties:/etc/trino/node.properties:ro
+      - ../../compose/etc/catalog:/etc/trino/catalog:ro
+    depends_on:
+      coordinator-b:
+        condition: service_started
+
+  predictor-b:
+    <<: *predictor
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/history_b
+      DB_USER: memoryhistory
+      DB_PASSWORD: memoryhistory
+      PER_WORKER_MEMORY_BYTES: ${PER_WORKER_MEMORY_BYTES}
+      MIN_WORKERS: ${MIN_WORKERS}
+      MAX_WORKERS: ${MAX_WORKERS}
+      SAFETY_FACTOR: ${SAFETY_FACTOR}
+      PORT: "8090"
+    ports:
+      - "127.0.0.1:${PREDICTOR_B_PORT}:8090"
+
+  # Decision service (Contract L2)
+  gate:
+    image: ${GATE_IMAGE}
+    environment:
+      GATE_GROUPS: a=http://predictor-a:8090,b=http://predictor-b:8090
+      GATE_DEFAULT_GROUP: a
+      GATE_PREDICTOR_TIMEOUT_MS: ${GATE_PREDICTOR_TIMEOUT_MS}
+      GATE_DELAY_MS: ${GATE_DELAY_MS}
+      PORT: "8095"
+    ports:
+      - "127.0.0.1:${GATE_PORT}:8095"
+
+  # Trino Gateway with external routing to the gate (Contract L3)
+  gateway:
+    image: ${GATEWAY_IMAGE}
+    volumes:
+      - ./gateway/config.yaml:/etc/trino-gateway/config.yaml:ro
+    ports:
+      - "127.0.0.1:${GATEWAY_PORT}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck: &gateway-health
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/trino-gateway/readyz"]
+      interval: 3s
+      timeout: 3s
+      retries: 60
+      start_period: 5s
+
+  # Trino Gateway without routing rules (baseline)
+  gateway-plain:
+    image: ${GATEWAY_IMAGE}
+    volumes:
+      - ./gateway/config-plain.yaml:/etc/trino-gateway/config.yaml:ro
+    ports:
+      - "127.0.0.1:${GATEWAY_PLAIN_PORT}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      gateway:
+        # The first gateway runs the schema migration of the shared database.
+        condition: service_healthy
+    healthcheck: *gateway-health
+
+  # Envoy with three listeners to cluster A (Contract L4)
+  envoy:
+    image: ${ENVOY_IMAGE}
+    command: ["envoy", "-c", "/etc/envoy/envoy.yaml", "--concurrency", "4", "--log-level", "warn"]
+    volumes:
+      - ./envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
+    ports:
+      - "127.0.0.1:${ENVOY_GATED_PORT}:10000"
+      - "127.0.0.1:${ENVOY_PLAIN_PORT}:10001"
+      - "127.0.0.1:${ENVOY_FIRST_ONLY_PORT}:10002"
+      - "127.0.0.1:${ENVOY_ADMIN_PORT}:9901"
+
+  # One-shot: registers the backends in Trino Gateway and waits until both gateways route to them.
+  init:
+    image: ${PYTHON_IMAGE}
+    profiles: ["tools"]
+    command: ["python", "-u", "/init/register.py"]
+    volumes:
+      - ./init:/init:ro
+
+  # Bench and checks (../bench). Run with: docker compose run --rm bench <args>
+  bench:
+    image: ${PYTHON_IMAGE}
+    profiles: ["tools"]
+    entrypoint: ["python", "-u", "/bench/bench.py"]
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    volumes:
+      - ../bench:/bench:ro
+      - ../results:/results
+
+volumes:
+  pgdata:

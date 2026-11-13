@@ -1,0 +1,19 @@
+# Trino Gateway without routing rules (baseline). It routes by the X-Trino-Routing-Group header.
+serverConfig:
+  node.environment: mhlab
+  http-server.http.port: 8080
+
+dataStore:
+  jdbcUrl: jdbc:postgresql://postgres:5432/gateway
+  user: memoryhistory
+  password: memoryhistory
+  driver: org.postgresql.Driver
+
+clusterStatsConfiguration:
+  monitorType: INFO_API
+
+monitor:
+  taskDelay: 5s
+
+routing:
+  defaultRoutingGroup: a

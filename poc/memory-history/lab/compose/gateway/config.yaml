@@ -1,0 +1,34 @@
+# Trino Gateway with external routing to the gate (Contract L3).
+serverConfig:
+  node.environment: mhlab
+  http-server.http.port: 8080
+  # Timeout of the external routing call. The default is 5 minutes.
+  router.http-client.request-timeout: 1s
+
+dataStore:
+  jdbcUrl: jdbc:postgresql://postgres:5432/gateway
+  user: memoryhistory
+  password: memoryhistory
+  driver: org.postgresql.Driver
+
+clusterStatsConfiguration:
+  monitorType: INFO_API
+
+monitor:
+  # Backend health check interval. The default is 1 minute.
+  taskDelay: 5s
+
+routing:
+  defaultRoutingGroup: a
+
+routingRules:
+  rulesEngineEnabled: true
+  rulesType: EXTERNAL
+  rulesExternalConfiguration:
+    urlPath: http://gate:8095/gateway/route
+    # The key must be present. An empty list sends all client headers to the gate.
+    excludeHeaders: []
+    propagateErrors: false
+
+requestAnalyzerConfig:
+  analyzeRequest: true
