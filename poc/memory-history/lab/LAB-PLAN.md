@@ -125,6 +125,38 @@ Checks that the bench must also make:
 - A known query gets `required_workers_count` on the `gateway` path and on the `envoy-gated` path (read it from `/v1/query/<id>` or from `query_history.session_properties`).
 - The reservation count of the predictor goes back to 0 after the queries end.
 
+## Contract L6: wait modes
+
+A query must not always wait. The gate has three modes.
+
+| Mode | What the gate does for a known query |
+|---|---|
+| `signal` | It makes the reservation, so the autoscaler adds workers. It adds no session properties. The query starts immediately with the workers that are there. |
+| `wait` | It makes the reservation and adds `required_workers_count` and `required_workers_max_wait_time`. Trino holds the query until the workers joined. This is the behaviour before this contract. |
+| `bounded:<seconds>` | It makes the reservation. Then the gate holds its answer until the cluster has the required workers, or until `<seconds>` passed. Then it answers with no session properties. The query starts with the workers that are there at that time. |
+
+An unknown query is not changed in any mode.
+
+**How the mode is selected** (the first match is used):
+
+1. The request header `X-Memory-Gate-Mode`.
+2. A client tag `gate_mode=<mode>` in `X-Trino-Client-Tags`.
+3. The default of the routing group: `GATE_MODE_<GROUP>` (for example `GATE_MODE_A=signal`).
+4. `GATE_DEFAULT_MODE` (default `wait`).
+
+A value that the gate does not understand is the same as no value. `<seconds>` is limited by `GATE_MAX_BOUNDED_SECONDS` (default `60`).
+
+**Worker count for `bounded`.** The gate reads the number of active workers of the group from the Trino
+coordinator. Configuration: `GATE_NODES_<GROUP>` (the coordinator URL). It reads the count each second
+during the hold. If it cannot read the count, it answers immediately, with no session properties.
+
+**Time limits of the callers.** A caller must wait longer than the hold.
+
+- Envoy: a fourth listener `gated-bounded` with an `ext_authz` time limit above `GATE_MAX_BOUNDED_SECONDS`. The listener `gated` keeps its short time limit, so `bounded` on that listener ends at the short time limit and the query runs unchanged.
+- Trino Gateway: the lab does not use `bounded` on this path. Its routing time limit stays at 1 s.
+
+`/stats` counts the requests for each mode, and the holds that ended because the workers were there or because the time passed.
+
 ## Two environments
 
 - **Compose** (`lab/compose/`, project name `mhlab`): all parts above. Fixed worker count (2 for each cluster).
@@ -141,6 +173,7 @@ Checks that the bench must also make:
 | L5 | kind: two clusters behind Trino Gateway, KEDA for each cluster | Queries on each path, worker counts |
 | L6 | kind: gate on both paths, and a heavy known query scales the right cluster | Worker timeline for cluster A and cluster B |
 | L7 | kind: bench report | `BENCH-kind.md` |
+| L8 | Wait modes work on compose and on kind | Session properties for each mode, hold times, and a heavy query in each mode on kind |
 
 ## Working rules
 
