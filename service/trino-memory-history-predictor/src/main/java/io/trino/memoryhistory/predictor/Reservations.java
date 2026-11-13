@@ -16,20 +16,30 @@ package io.trino.memoryhistory.predictor;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.InstantSource;
+import java.util.Comparator;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 /**
  * Memory reserved by queries that are about to run. Held in memory only.
+ * <p>
+ * A reservation made by {@code /v1/gate} also holds the fingerprint of the query. The automatic
+ * release uses it to find the reservation when a query of that fingerprint completes.
+ * Reservations made by {@code POST /v1/reservations} have no fingerprint and are never released
+ * automatically.
  */
 public class Reservations
 {
     private final PredictorConfig config;
     private final InstantSource clock;
     private final Map<String, Reservation> reservations = new ConcurrentHashMap<>();
+    // Orders reservations that were created at the same instant
+    private final AtomicLong sequence = new AtomicLong();
 
     public Reservations(PredictorConfig config, InstantSource clock)
     {
@@ -39,15 +49,52 @@ public class Reservations
 
     public void add(String id, long predictedBytes, Duration ttl)
     {
+        add(id, Optional.empty(), predictedBytes, ttl);
+    }
+
+    public void addGate(String id, String fingerprint, long predictedBytes, Duration ttl)
+    {
+        add(id, Optional.of(requireNonNull(fingerprint, "fingerprint is null")), predictedBytes, ttl);
+    }
+
+    private void add(String id, Optional<String> gateFingerprint, long predictedBytes, Duration ttl)
+    {
         requireNonNull(id, "id is null");
         checkArgument(predictedBytes >= 0, "predictedBytes must not be negative");
         checkArgument(ttl.isPositive(), "ttl must be positive");
-        reservations.put(id, new Reservation(predictedBytes, clock.instant().plus(ttl)));
+        Instant now = clock.instant();
+        reservations.put(id, new Reservation(predictedBytes, now, now.plus(ttl), gateFingerprint, sequence.incrementAndGet()));
     }
 
     public void remove(String id)
     {
         reservations.remove(id);
+    }
+
+    /**
+     * Releases the oldest live reservation that was made by {@code /v1/gate} for {@code fingerprint}
+     * before {@code endTime}. Returns its id, or empty when no reservation matches.
+     */
+    public synchronized Optional<String> releaseCompleted(String fingerprint, Instant endTime)
+    {
+        requireNonNull(fingerprint, "fingerprint is null");
+        requireNonNull(endTime, "endTime is null");
+        while (true) {
+            Instant now = clock.instant();
+            Optional<Map.Entry<String, Reservation>> oldest = reservations.entrySet().stream()
+                    .filter(entry -> entry.getValue().expiresAt().isAfter(now))
+                    .filter(entry -> entry.getValue().gateFingerprint().equals(Optional.of(fingerprint)))
+                    .filter(entry -> entry.getValue().createdAt().isBefore(endTime))
+                    .min(Comparator.comparing((Map.Entry<String, Reservation> entry) -> entry.getValue().createdAt())
+                            .thenComparingLong(entry -> entry.getValue().sequence()));
+            if (oldest.isEmpty()) {
+                return Optional.empty();
+            }
+            // A concurrent DELETE or a new reservation with the same id may change the entry; then look again
+            if (reservations.remove(oldest.get().getKey(), oldest.get().getValue())) {
+                return Optional.of(oldest.get().getKey());
+            }
+        }
     }
 
     public RequiredWorkers requiredWorkers()
@@ -68,5 +115,5 @@ public class Reservations
 
     public record RequiredWorkers(int workers, int reservations) {}
 
-    private record Reservation(long predictedBytes, Instant expiresAt) {}
+    private record Reservation(long predictedBytes, Instant createdAt, Instant expiresAt, Optional<String> gateFingerprint, long sequence) {}
 }

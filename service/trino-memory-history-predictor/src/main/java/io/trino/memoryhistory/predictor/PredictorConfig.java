@@ -15,6 +15,7 @@ package io.trino.memoryhistory.predictor;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
@@ -29,8 +30,18 @@ public record PredictorConfig(
         double safetyFactor,
         double failureGrowthFactor,
         int historyRuns,
-        int port)
+        int port,
+        String gateMaxWait,
+        long gateReservationTtlSeconds,
+        long autoReleaseIntervalMs)
 {
+    public static final String DEFAULT_GATE_MAX_WAIT = "10m";
+    public static final long DEFAULT_GATE_RESERVATION_TTL_SECONDS = 3600;
+    public static final long DEFAULT_AUTO_RELEASE_INTERVAL_MS = 2000;
+
+    // The format of a Trino duration session property, for example 10m or 90s
+    private static final Pattern DURATION = Pattern.compile("\\d+(\\.\\d+)?(ns|us|ms|s|m|h|d)");
+
     public PredictorConfig
     {
         requireNonNull(dbUrl, "dbUrl is null");
@@ -42,6 +53,37 @@ public record PredictorConfig(
         checkArgument(safetyFactor > 0, "SAFETY_FACTOR must be positive");
         checkArgument(failureGrowthFactor > 0, "FAILURE_GROWTH_FACTOR must be positive");
         checkArgument(historyRuns > 0, "HISTORY_RUNS must be positive");
+        requireNonNull(gateMaxWait, "gateMaxWait is null");
+        checkArgument(DURATION.matcher(gateMaxWait).matches(), "GATE_MAX_WAIT must be a duration such as 10m");
+        checkArgument(gateReservationTtlSeconds > 0, "GATE_RESERVATION_TTL_SECONDS must be positive");
+        checkArgument(autoReleaseIntervalMs > 0, "AUTO_RELEASE_INTERVAL_MS must be positive");
+    }
+
+    public PredictorConfig(
+            String dbUrl,
+            Optional<String> dbUser,
+            Optional<String> dbPassword,
+            long perWorkerMemoryBytes,
+            int minWorkers,
+            int maxWorkers,
+            double safetyFactor,
+            double failureGrowthFactor,
+            int historyRuns,
+            int port)
+    {
+        this(dbUrl,
+                dbUser,
+                dbPassword,
+                perWorkerMemoryBytes,
+                minWorkers,
+                maxWorkers,
+                safetyFactor,
+                failureGrowthFactor,
+                historyRuns,
+                port,
+                DEFAULT_GATE_MAX_WAIT,
+                DEFAULT_GATE_RESERVATION_TTL_SECONDS,
+                DEFAULT_AUTO_RELEASE_INTERVAL_MS);
     }
 
     public static PredictorConfig fromEnvironment(Map<String, String> environment)
@@ -56,7 +98,10 @@ public record PredictorConfig(
                 Double.parseDouble(environment.getOrDefault("SAFETY_FACTOR", "1.2")),
                 Double.parseDouble(environment.getOrDefault("FAILURE_GROWTH_FACTOR", "2.0")),
                 Integer.parseInt(environment.getOrDefault("HISTORY_RUNS", "10")),
-                Integer.parseInt(environment.getOrDefault("PORT", "8090")));
+                Integer.parseInt(environment.getOrDefault("PORT", "8090")),
+                environment.getOrDefault("GATE_MAX_WAIT", DEFAULT_GATE_MAX_WAIT),
+                Long.parseLong(environment.getOrDefault("GATE_RESERVATION_TTL_SECONDS", String.valueOf(DEFAULT_GATE_RESERVATION_TTL_SECONDS))),
+                Long.parseLong(environment.getOrDefault("AUTO_RELEASE_INTERVAL_MS", String.valueOf(DEFAULT_AUTO_RELEASE_INTERVAL_MS))));
     }
 
     /**

@@ -14,6 +14,7 @@
 package io.trino.memoryhistory.predictor;
 
 import java.net.InetSocketAddress;
+import java.time.Duration;
 import java.time.InstantSource;
 import java.util.logging.Logger;
 
@@ -27,12 +28,24 @@ public final class PredictorMain
             throws Exception
     {
         PredictorConfig config = PredictorConfig.fromEnvironment(System.getenv());
+        HistoryRepository repository = new HistoryRepository(config);
+        Reservations reservations = new Reservations(config, InstantSource.system());
         PredictorServer server = new PredictorServer(
-                new PredictorService(config, new HistoryRepository(config)),
-                new Reservations(config, InstantSource.system()),
+                new PredictorService(config, repository),
+                reservations,
                 new InetSocketAddress(config.port()));
-        Runtime.getRuntime().addShutdownHook(new Thread(server::close));
+        AutoRelease autoRelease = new AutoRelease(
+                repository::completedSince,
+                reservations,
+                Duration.ofMillis(config.autoReleaseIntervalMs()),
+                AutoRelease.DEFAULT_OVERLAP,
+                InstantSource.system().instant());
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            autoRelease.close();
+            server.close();
+        }));
         server.start();
+        autoRelease.start();
         log.info("Memory history predictor listening on port %s (per-worker memory %s bytes, workers %s-%s)".formatted(
                 server.port(), config.perWorkerMemoryBytes(), config.minWorkers(), config.maxWorkers()));
     }

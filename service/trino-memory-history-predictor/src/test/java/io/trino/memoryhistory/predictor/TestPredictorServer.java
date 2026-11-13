@@ -181,7 +181,7 @@ final class TestPredictorServer
         return QueryFingerprint.compute(sql, Optional.of("tpch"), Optional.of("tiny")).orElseThrow();
     }
 
-    private static QueryHistoryRecord row(String queryId, String fingerprint, String state, Optional<String> errorCode, long peakUserMemoryBytes, Instant endTime)
+    static QueryHistoryRecord row(String queryId, String fingerprint, String state, Optional<String> errorCode, long peakUserMemoryBytes, Instant endTime)
     {
         return new QueryHistoryRecord(
                 queryId,

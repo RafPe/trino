@@ -28,7 +28,10 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.sql.SQLException;
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
@@ -38,7 +41,7 @@ import java.util.logging.Logger;
 import static java.util.Objects.requireNonNull;
 
 /**
- * HTTP API of the predictor: {@code /v1/predict}, {@code /v1/reservations},
+ * HTTP API of the predictor: {@code /v1/predict}, {@code /v1/gate}, {@code /v1/reservations},
  * {@code /v1/required-workers} and {@code /v1/health}.
  */
 public class PredictorServer
@@ -50,7 +53,7 @@ public class PredictorServer
             .build();
     private static final long DEFAULT_TTL_SECONDS = 900;
     private static final String RESERVATIONS_PATH = "/v1/reservations";
-    // Predictions read the database; bound them so a stalled database cannot pile up connections
+    // Predictions (also those of /v1/gate) read the database; bound them so a stalled database cannot pile up connections
     private static final int MAX_CONCURRENT_PREDICTIONS = 16;
 
     private final PredictorService predictor;
@@ -68,6 +71,7 @@ public class PredictorServer
         this.executor = Executors.newVirtualThreadPerTaskExecutor();
         server.setExecutor(executor);
         server.createContext("/v1/predict", exchange -> handle(exchange, this::predict));
+        server.createContext("/v1/gate", exchange -> handle(exchange, this::gate));
         server.createContext(RESERVATIONS_PATH, exchange -> handle(exchange, this::reservations));
         server.createContext("/v1/required-workers", exchange -> handle(exchange, this::requiredWorkers));
         server.createContext("/v1/health", exchange -> handle(exchange, this::health));
@@ -94,6 +98,42 @@ public class PredictorServer
     private Response predict(HttpExchange exchange)
             throws Exception
     {
+        return withPrediction(exchange, Response::ok);
+    }
+
+    /**
+     * Predicts, and for a known query also makes a reservation that the automatic release removes
+     * when the query completes.
+     */
+    private Response gate(HttpExchange exchange)
+            throws Exception
+    {
+        return withPrediction(exchange, prediction -> {
+            PredictorConfig config = predictor.config();
+            Map<String, Object> response = new LinkedHashMap<>(prediction);
+            if (Boolean.TRUE.equals(prediction.get("known"))) {
+                String id = UUID.randomUUID().toString();
+                reservations.addGate(
+                        id,
+                        (String) prediction.get("fingerprint"),
+                        (Long) prediction.get("predictedPeakUserMemoryBytes"),
+                        Duration.ofSeconds(config.gateReservationTtlSeconds()));
+                response.put("reservationId", id);
+                response.put("sessionProperties", ImmutableMap.of(
+                        "required_workers_count", String.valueOf(prediction.get("requiredWorkers")),
+                        "required_workers_max_wait_time", config.gateMaxWait()));
+            }
+            else {
+                response.put("reservationId", null);
+                response.put("sessionProperties", ImmutableMap.of());
+            }
+            return Response.ok(response);
+        });
+    }
+
+    private Response withPrediction(HttpExchange exchange, PredictionHandler handler)
+            throws Exception
+    {
         if (!exchange.getRequestMethod().equals("POST")) {
             return methodNotAllowed();
         }
@@ -105,8 +145,9 @@ public class PredictorServer
         if (!predictions.tryAcquire()) {
             return new Response(503, ImmutableMap.of("error", "too many concurrent predictions"));
         }
+        Map<String, Object> prediction;
         try {
-            return new Response(200, predictor.predict(sql.get(), text(request, "catalog"), text(request, "schema")));
+            prediction = predictor.predict(sql.get(), text(request, "catalog"), text(request, "schema"));
         }
         catch (SQLException e) {
             log.log(Level.WARNING, "History database unavailable", e);
@@ -115,6 +156,7 @@ public class PredictorServer
         finally {
             predictions.release();
         }
+        return handler.handle(prediction);
     }
 
     private Response reservations(HttpExchange exchange)
@@ -232,7 +274,18 @@ public class PredictorServer
                 throws Exception;
     }
 
-    private record Response(int status, Object body) {}
+    private interface PredictionHandler
+    {
+        Response handle(Map<String, Object> prediction);
+    }
+
+    private record Response(int status, Object body)
+    {
+        static Response ok(Object body)
+        {
+            return new Response(200, body);
+        }
+    }
 
     private static class InvalidRequestException
             extends RuntimeException

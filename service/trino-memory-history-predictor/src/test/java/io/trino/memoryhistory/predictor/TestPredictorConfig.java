@@ -50,6 +50,32 @@ final class TestPredictorConfig
     }
 
     @Test
+    void testGateConfig()
+    {
+        PredictorConfig defaults = PredictorConfig.fromEnvironment(Map.of("DB_URL", "jdbc:postgresql://db/history", "PER_WORKER_MEMORY_BYTES", "1"));
+        assertThat(defaults.gateMaxWait()).isEqualTo("10m");
+        assertThat(defaults.gateReservationTtlSeconds()).isEqualTo(3600);
+        assertThat(defaults.autoReleaseIntervalMs()).isEqualTo(2000);
+
+        PredictorConfig explicit = PredictorConfig.fromEnvironment(Map.of(
+                "DB_URL", "jdbc:postgresql://db/history",
+                "PER_WORKER_MEMORY_BYTES", "1",
+                "GATE_MAX_WAIT", "90s",
+                "GATE_RESERVATION_TTL_SECONDS", "600",
+                "AUTO_RELEASE_INTERVAL_MS", "500"));
+        assertThat(explicit.gateMaxWait()).isEqualTo("90s");
+        assertThat(explicit.gateReservationTtlSeconds()).isEqualTo(600);
+        assertThat(explicit.autoReleaseIntervalMs()).isEqualTo(500);
+
+        assertThatThrownBy(() -> PredictorConfig.fromEnvironment(Map.of("DB_URL", "x", "PER_WORKER_MEMORY_BYTES", "1", "GATE_MAX_WAIT", "10 minutes")))
+                .hasMessageContaining("GATE_MAX_WAIT");
+        assertThatThrownBy(() -> PredictorConfig.fromEnvironment(Map.of("DB_URL", "x", "PER_WORKER_MEMORY_BYTES", "1", "GATE_RESERVATION_TTL_SECONDS", "0")))
+                .hasMessageContaining("GATE_RESERVATION_TTL_SECONDS");
+        assertThatThrownBy(() -> PredictorConfig.fromEnvironment(Map.of("DB_URL", "x", "PER_WORKER_MEMORY_BYTES", "1", "AUTO_RELEASE_INTERVAL_MS", "0")))
+                .hasMessageContaining("AUTO_RELEASE_INTERVAL_MS");
+    }
+
+    @Test
     void testMissingRequired()
     {
         assertThatThrownBy(() -> PredictorConfig.fromEnvironment(Map.of("PER_WORKER_MEMORY_BYTES", "1")))

@@ -37,6 +37,11 @@ public class PredictorService
         this.repository = requireNonNull(repository, "repository is null");
     }
 
+    public PredictorConfig config()
+    {
+        return config;
+    }
+
     /**
      * Returns the JSON response body as an ordered map. Values may be null.
      */
