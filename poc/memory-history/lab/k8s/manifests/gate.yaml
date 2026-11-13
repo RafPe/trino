@@ -1,6 +1,7 @@
 # Gate (contract L2): the decision service for Trino Gateway and Envoy.
 # Group a asks predictor-a, group b asks predictor-b. Service gate:8095.
 # For the W4 bench test, GATE_DELAY_MS is changed with `kubectl set env` and set back to 0 after it.
+# Wait modes (contract L6): default `wait`; `bounded` reads the active workers from the coordinator of the group.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -33,6 +34,14 @@ spec:
               value: "0"
             - name: PORT
               value: "8095"
+            - name: GATE_DEFAULT_MODE
+              value: wait
+            - name: GATE_MAX_BOUNDED_SECONDS
+              value: "60"
+            - name: GATE_NODES_A
+              value: http://trino-a:8080
+            - name: GATE_NODES_B
+              value: http://trino-b:8080
           ports:
             - name: http
               containerPort: 8095

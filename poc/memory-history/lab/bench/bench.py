@@ -380,9 +380,177 @@ def cmd_checks(args, out):
     sys.exit(0 if all(results) else 1)
 
 
+# ---------------------------------------------------------------- wait modes (Contract L6)
+
+# Paths for the mode checks. Not in PATHS, so the timed workloads do not change.
+MODE_PATHS = {
+    "envoy-gated": "http://envoy:10000",
+    "envoy-gated-bounded": "http://envoy:10003",
+    "gateway": "http://gateway:8080",
+}
+# A light query: 2 workers, about 3 s on 2 workers, so a reservation is visible while it runs.
+LIGHT_SQL = "SELECT count(*) FROM (SELECT orderkey, count(*) AS c FROM tpch.sf5.lineitem GROUP BY orderkey) WHERE c > {}"
+# A heavier query: peak about 1.75 GB, so the predictor asks for 3 workers (1.5 x 1.75 GB / 1 GiB = 2.4).
+# On 2 workers it still finishes, in about 5 s. The client sets the join type, so the peak stays the same.
+HEAVY_SQL = "SELECT count(*) FROM tpch.sf9.orders o JOIN tpch.sf9.lineitem l ON o.orderkey = l.orderkey WHERE l.quantity > {}"
+HEAVY_SESSION = "join_distribution_type=PARTITIONED"
+
+
+def query_info(query_id):
+    status, info = get_json(f"{COORDINATORS['a']}/v1/query/{query_id}", headers={"X-Trino-User": "bench"})
+    return info if status == 200 else {}
+
+
+def reservations_a():
+    return get_json(PREDICTORS["a"] + "/v1/required-workers")[1].get("reservations")
+
+
+def mode_headers(how, mode, session=None):
+    """how = header | tag | none: where the client puts the mode."""
+    extra = {}
+    if how == "header":
+        extra["X-Memory-Gate-Mode"] = mode
+    elif how == "tag":
+        extra["X-Trino-Client-Tags"] = "mhlab-bench,gate_mode=" + mode
+    return headers_for(schema="sf1", session=session, extra=extra)
+
+
+def run_watched(base, sql, headers):
+    """Runs one query and samples the reservations of predictor-a right after the first request and 1.5 s later."""
+    client = Client()
+    record = {"rows": 0}
+    start = time.perf_counter()
+    status, _, body = client.request("POST", base + "/v1/statement", sql.encode(), headers)
+    record["t_first_ms"] = round((time.perf_counter() - start) * 1000, 1)
+    record["resv_after_first"] = reservations_a()
+    result = json.loads(body) if status == 200 else {}
+    record["query_id"] = result.get("id")
+    sampled = False
+    follow = {"X-Trino-User": "bench"}
+    while result.get("nextUri"):
+        if not sampled and time.perf_counter() - start > record["t_first_ms"] / 1000 + 1.5:
+            record["resv_1500ms"] = reservations_a()
+            sampled = True
+        status, _, body = client.request("GET", result["nextUri"], headers=follow)
+        result = json.loads(body)
+    client.close()
+    record["t_total_ms"] = round((time.perf_counter() - start) * 1000, 1)
+    record["state"] = result.get("stats", {}).get("state")
+    if result.get("error"):
+        record["error"] = result["error"].get("errorName")
+    return record
+
+
+def wait_reservations(target, limit_s=30):
+    deadline = time.monotonic() + limit_s
+    started = time.monotonic()
+    while True:
+        current = reservations_a()
+        if current == target or time.monotonic() > deadline:
+            return current, round(time.monotonic() - started, 1)
+        time.sleep(0.5)
+
+
+def learn_a(sql, session=None, min_workers=2):
+    """Runs the shape directly on cluster A until predictor-a knows it and asks for at least min_workers."""
+    for attempt in range(3):
+        client = Client()
+        record = run_query(client, COORDINATORS["a"], sql.format(attempt), headers_for(schema="sf1", session=session))
+        client.close()
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            status, prediction = post_json(PREDICTORS["a"] + "/v1/predict", {"sql": sql.format(99), "catalog": "tpch", "schema": "sf1"})
+            if status == 200 and prediction.get("known") and (prediction.get("requiredWorkers") or 0) >= min_workers:
+                print(f"learn: {record.get('query_id')} {record.get('state')}; predictor-a: requiredWorkers={prediction['requiredWorkers']} "
+                      f"peak={prediction.get('predictedPeakUserMemoryBytes')} basis={prediction.get('basis')}")
+                return prediction
+            time.sleep(1)
+    sys.exit(f"predictor-a does not know {sql!r} with at least {min_workers} workers")
+
+
+def cmd_modes(args, out):
+    """For each mode on envoy-gated, envoy-gated-bounded and gateway: the session properties, the hold and the reservation.
+
+    Compose has 2 workers for each cluster and no scaler. The light query needs 2 workers, so `bounded` answers at once.
+    The heavy query needs 3 workers, so `bounded:<n>` holds for n seconds, then the query runs on 2 workers.
+    query_history.session_properties is read afterwards by bench/modes.sh (this container has no PostgreSQL client).
+    """
+    light = learn_a(LIGHT_SQL, min_workers=2)
+    heavy = learn_a(HEAVY_SQL, session=HEAVY_SESSION, min_workers=3)
+    if light["requiredWorkers"] != 2:
+        sys.exit(f"the light query must need 2 workers: {light}")
+    hold_s = args.hold_seconds
+    # (path, how the client sets the mode, mode, query, expect the gate properties, expected hold, reservation while it runs)
+    cases = [
+        ("envoy-gated", "tag", "wait", "light", True, "none", True),
+        ("envoy-gated", "tag", "signal", "light", False, "none", True),
+        ("envoy-gated", "tag", "bounded:10", "light", False, "ready", True),
+        ("envoy-gated-bounded", "header", "wait", "light", True, "none", True),
+        ("envoy-gated-bounded", "header", "signal", "light", False, "none", True),
+        ("envoy-gated-bounded", "header", "bounded:10", "light", False, "ready", True),
+        ("envoy-gated-bounded", "header", f"bounded:{hold_s}", "heavy", False, "time", True),
+        # gated keeps its 250 ms time limit: Envoy gives up, the query runs unchanged, the gate deletes the reservation.
+        ("envoy-gated", "tag", f"bounded:{hold_s}", "heavy", False, "caller_gone", False),
+        ("gateway", "header", "wait", "light", True, "none", True),
+        ("gateway", "header", "signal", "light", False, "none", True),
+        ("gateway", "tag", "signal", "light", False, "none", True),
+        ("envoy-gated-bounded", "none", "", "light", True, "none", True),  # no mode: GATE_DEFAULT_MODE=wait
+    ]
+    results = []
+    for i, (path, how, mode, kind, want_props, want_hold, want_resv) in enumerate(cases):
+        sql = (LIGHT_SQL if kind == "light" else HEAVY_SQL).format(1000 + i)
+        before_resv, _ = wait_reservations(0)
+        before = gate_stats()
+        record = run_watched(MODE_PATHS[path], sql, mode_headers(how, mode, HEAVY_SESSION if kind == "heavy" else None))
+        after_resv, waited = wait_reservations(0)
+        after = gate_stats()
+        delta = {k: after.get(k, 0) - before.get(k, 0) for k in after if k.startswith(("hold_", "mode_", "caller_gone", "reservations_deleted", "known"))}
+        info = query_info(record.get("query_id"))
+        session = info.get("session", {}).get("systemProperties", {})
+        stats = info.get("queryStats", {})
+        has_props = "required_workers_count" in session
+        hold_end = {"ready": "hold_workers_ready", "time": "hold_time_passed", "caller_gone": "hold_caller_gone"}.get(want_hold)
+        resv_during = record.get("resv_after_first")
+        resv_later = record.get("resv_1500ms", resv_during)
+        checks = {
+            "finished": record.get("state") == "FINISHED",
+            "session properties as expected": has_props == want_props,
+            "hold as expected": (delta.get(hold_end, 0) == 1) if hold_end else all(delta.get(k, 0) == 0 for k in delta if k.startswith("hold_") and k != "hold_ms_total"),
+            "reservation while it runs": (resv_later >= before_resv + 1) if want_resv else (resv_later == before_resv),
+            "no reservation after it": after_resv == 0,
+        }
+        if want_hold == "time":
+            checks["hold about n seconds"] = hold_s * 1000 <= record["t_first_ms"] <= hold_s * 1000 + 2500
+        if want_hold in ("ready", "none"):
+            checks["answer at once"] = record["t_first_ms"] < 1000
+        if want_hold == "caller_gone":
+            checks["Envoy time limit 250 ms"] = record["t_first_ms"] < 1000 and delta.get("reservations_deleted", 0) == 1
+        ok = all(checks.values())
+        results.append(ok)
+        line = {
+            "kind": "mode-check", "case": i, "path": path, "how": how, "mode": mode or "(none)", "query": kind,
+            "expect_properties": want_props, "query_id": record.get("query_id"), "state": record.get("state"),
+            "error": record.get("error"), "t_first_ms": record["t_first_ms"], "t_total_ms": record["t_total_ms"],
+            "trino_resource_waiting": stats.get("resourceWaitingTime"), "trino_elapsed": stats.get("elapsedTime"),
+            "peak": stats.get("peakUserMemoryReservation"), "session": session,
+            "reservations": {"before": before_resv, "after_first_request": resv_during, "after_1500ms": resv_later,
+                             "after_end": after_resv, "back_to_0_after_s": waited},
+            "gate_delta": {k: v for k, v in delta.items() if v}, "checks": checks, "ok": ok,
+        }
+        out.write(line)
+        print(f"{'PASS' if ok else 'FAIL'} [{path} {how} {mode or '(none)'} {kind}] {record.get('query_id')} {record.get('state')} "
+              f"first={record['t_first_ms']:.0f}ms total={record['t_total_ms']:.0f}ms trino_wait={stats.get('resourceWaitingTime')} "
+              f"props={'yes' if has_props else 'no'} resv {before_resv}->{resv_during}->{resv_later}->{after_resv} "
+              f"gate {json.dumps(line['gate_delta'], sort_keys=True)}"
+              + ("" if ok else f" failed: {[k for k, v in checks.items() if not v]}"))
+    out.write({"kind": "gate_stats", "when": "after modes", "stats": gate_stats()})
+    sys.exit(0 if all(results) else 1)
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["smoke", "learn", "run", "w4", "checks"])
+    parser.add_argument("command", choices=["smoke", "learn", "run", "w4", "checks", "modes"])
+    parser.add_argument("--hold-seconds", type=int, default=8, help="modes: n of bounded:<n> for the heavy query")
     parser.add_argument("--out", default="/results/bench-compose.jsonl")
     parser.add_argument("--env", default="compose")
     parser.add_argument("--run-id", default=time.strftime("%Y%m%dT%H%M%S"))
@@ -399,7 +567,7 @@ def main():
         cmd_smoke(args, None)
         return
     out = Output(args.out, args.env, args.run_id)
-    {"learn": cmd_learn, "run": cmd_run, "w4": cmd_w4, "checks": cmd_checks}[args.command](args, out)
+    {"learn": cmd_learn, "run": cmd_run, "w4": cmd_w4, "checks": cmd_checks, "modes": cmd_modes}[args.command](args, out)
 
 
 if __name__ == "__main__":

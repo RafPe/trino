@@ -141,6 +141,13 @@ services:
       GATE_PREDICTOR_TIMEOUT_MS: ${GATE_PREDICTOR_TIMEOUT_MS}
       GATE_DELAY_MS: ${GATE_DELAY_MS}
       PORT: "8095"
+      # Wait modes (Contract L6). Empty GATE_MODE_<GROUP> = no group default.
+      GATE_DEFAULT_MODE: ${GATE_DEFAULT_MODE}
+      GATE_MODE_A: ${GATE_MODE_A}
+      GATE_MODE_B: ${GATE_MODE_B}
+      GATE_MAX_BOUNDED_SECONDS: ${GATE_MAX_BOUNDED_SECONDS}
+      GATE_NODES_A: http://coordinator-a:8080
+      GATE_NODES_B: http://coordinator-b:8080
     ports:
       - "127.0.0.1:${GATE_PORT}:8095"
 
@@ -176,7 +183,7 @@ services:
         condition: service_healthy
     healthcheck: *gateway-health
 
-  # Envoy with three listeners to cluster A (Contract L4)
+  # Envoy with four listeners to cluster A (Contract L4, and gated-bounded of Contract L6)
   envoy:
     image: ${ENVOY_IMAGE}
     command: ["envoy", "-c", "/etc/envoy/envoy.yaml", "--concurrency", "4", "--log-level", "warn"]
@@ -186,6 +193,7 @@ services:
       - "127.0.0.1:${ENVOY_GATED_PORT}:10000"
       - "127.0.0.1:${ENVOY_PLAIN_PORT}:10001"
       - "127.0.0.1:${ENVOY_FIRST_ONLY_PORT}:10002"
+      - "127.0.0.1:${ENVOY_GATED_BOUNDED_PORT}:10003"
       - "127.0.0.1:${ENVOY_ADMIN_PORT}:9901"
 
   # One-shot: registers the backends in Trino Gateway and waits until both gateways route to them.

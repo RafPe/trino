@@ -1,4 +1,4 @@
-# Envoy (contract L4): three listeners to cluster A. The configuration is the ConfigMap
+# Envoy (contract L4): three listeners to cluster A, and gated-bounded (contract L6). The configuration is the ConfigMap
 # envoy-config, made by up.sh from ../envoy.yaml. up.sh replaces ${CONFIG_SHA}, so a changed
 # configuration restarts the pod.
 apiVersion: apps/v1
@@ -32,6 +32,8 @@ spec:
               containerPort: 10001
             - name: first-only
               containerPort: 10002
+            - name: gated-bounded
+              containerPort: 10003
             - name: admin
               containerPort: 9901
           readinessProbe:
@@ -70,6 +72,9 @@ spec:
     - name: first-only
       port: 10002
       targetPort: first-only
+    - name: gated-bounded
+      port: 10003
+      targetPort: gated-bounded
     - name: admin
       port: 9901
       targetPort: admin

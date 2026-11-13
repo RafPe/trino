@@ -1,0 +1,103 @@
+12:11:55 run tag m1794571915; modes: wait signal bounded40 bounded5
+12:11:55 gate stats before: {"caller_gone":0,"hold_caller_gone":0,"hold_ms_total":0,"hold_nodes_error":0,"hold_time_passed":0,"hold_workers_ready":0,"known":0,"mode_bounded":0,"mode_signal":0,"mode_wait":0,"predictor_errors":0,"predictor_timeouts":0,"requests":0,"reservation_delete_errors":0,"reservations_deleted":0,"skipped":0,"unknown":0}
+12:11:55 == mode wait: waiting until both clusters are idle
+12:12:04 learn: {"query_id":"20261113_121157_06092_qbfvt","state":"FAILED","error":"EXCEEDED_LOCAL_MEMORY_LIMIT: Query excee","peak_user_memory_gib":1.85,"workers_used":2}
+12:12:06 predictor-a: {"known":true,"runs":1,"memoryFailures":1,"predictedPeakGiB":3.69,"requiredWorkers":6,"basis":"memory_failure_growth"}
+12:12:07 wait: sent to http://envoy:10000 (mode wait)
+12:12:57 wait: ended FINISHED 
+{"tag":"wait","mode":"wait","query_id":"20261113_121208_06097_qbfvt","state":"FINISHED","error":"","gate_hold_ms":0,"client_first_s":0.026,"trino_wait":"29.64s","elapsed_time":"48.48s","peak_user_memory_gib":3.34,"workers_used":6,"workers_before":2,"workers_after":6,"required_workers_count":"6"}
+12:12:57 trino-a worker pods:
+  trino-a-worker-74f6bd7497-gj6gh created=2026-11-13T12:12:20Z ready=2026-11-13T12:12:32Z
+  trino-a-worker-74f6bd7497-hgl5j created=2026-11-13T09:46:16Z ready=2026-11-13T09:46:29Z
+  trino-a-worker-74f6bd7497-nc5gt created=2026-11-13T12:12:20Z ready=2026-11-13T12:12:32Z
+  trino-a-worker-74f6bd7497-nw7kz created=2026-11-13T12:12:20Z ready=2026-11-13T12:12:32Z
+  trino-a-worker-74f6bd7497-tdz57 created=2026-11-13T09:46:00Z ready=2026-11-13T09:46:16Z
+  trino-a-worker-74f6bd7497-vw5nh created=2026-11-13T12:12:20Z ready=2026-11-13T12:12:32Z
+12:12:57 HPA events of trino-a:
+  2026-11-13T12:12:20Z New size: 6; reason: external metric s0-metric-api-workers(&LabelSelector{MatchLabels:map[string]string{scaledobject.keda.sh/name: trino-a-worker,},MatchExpressions:[]LabelSelectorRequirement{},}) above target
+12:12:58 reservations back to 0: {"a": {"active": 6, "predictor": 2, "reservations": 0}, "b": {"active": 2, "predictor": 2, "reservations": 0}}
+12:12:58 == mode signal: waiting until both clusters are idle
+12:15:06 learn: {"query_id":"20261113_121459_06178_qbfvt","state":"FAILED","error":"EXCEEDED_LOCAL_MEMORY_LIMIT: Query excee","peak_user_memory_gib":1.75,"workers_used":2}
+12:15:07 predictor-a: {"known":true,"runs":1,"memoryFailures":1,"predictedPeakGiB":3.5,"requiredWorkers":6,"basis":"memory_failure_growth"}
+12:15:08 signal-1: sent to http://envoy:10000 (mode signal)
+12:15:16 signal-1: ended FAILED EXCEEDED_LOCAL_MEMORY_LIMIT: Query exceeded per-node memory limit of 1GB [Allocated: 1004.04MB, Delta: 49.94MB, Top Consumers: {HashBuilderOperator=982.69MB, ScanFilterAndProjectOperator-Co
+{"tag":"signal-1","mode":"signal","query_id":"20261113_121509_06183_qbfvt","state":"FAILED","error":"EXCEEDED_LOCAL_MEMORY_LIMIT: Query exceeded per-node memory ","gate_hold_ms":0,"client_first_s":0.024,"trino_wait":"4.83ms","elapsed_time":"6.30s","peak_user_memory_gib":1.77,"workers_used":2,"workers_before":2,"workers_after":2,"required_workers_count":null}
+12:15:17 predictor-a after the first run: {"known":true,"runs":2,"memoryFailures":2,"predictedPeakGiB":3.54,"requiredWorkers":6,"basis":"memory_failure_growth"}
+12:15:17 signal-2: sent to http://envoy:10000 (mode signal)
+12:15:27 signal-2: ended FAILED EXCEEDED_LOCAL_MEMORY_LIMIT: Query exceeded per-node memory limit of 1GB [Allocated: 1019.23MB, Delta: 49.88MB, Top Consumers: {HashBuilderOperator=1001.25MB, LazyOutputBuffer=7.71MB, ScanF
+{"tag":"signal-2","mode":"signal","query_id":"20261113_121518_06190_qbfvt","state":"FAILED","error":"EXCEEDED_LOCAL_MEMORY_LIMIT: Query exceeded per-node memory ","gate_hold_ms":0,"client_first_s":0.022,"trino_wait":"4.70ms","elapsed_time":"7.85s","peak_user_memory_gib":1.81,"workers_used":2,"workers_before":2,"workers_after":2,"required_workers_count":null}
+12:15:27 trino-a worker pods:
+  trino-a-worker-74f6bd7497-2pgbx created=2026-11-13T12:15:20Z ready=-
+  trino-a-worker-74f6bd7497-789b7 created=2026-11-13T12:15:20Z ready=-
+  trino-a-worker-74f6bd7497-gj6gh created=2026-11-13T12:12:20Z ready=2026-11-13T12:12:32Z
+  trino-a-worker-74f6bd7497-hgl5j created=2026-11-13T09:46:16Z ready=2026-11-13T09:46:29Z
+  trino-a-worker-74f6bd7497-hsl5x created=2026-11-13T12:15:20Z ready=-
+  trino-a-worker-74f6bd7497-nc5gt created=2026-11-13T12:12:20Z ready=2026-11-13T12:12:32Z
+  trino-a-worker-74f6bd7497-nw7kz created=2026-11-13T12:12:20Z ready=2026-11-13T12:12:32Z
+  trino-a-worker-74f6bd7497-qttsv created=2026-11-13T12:15:20Z ready=-
+  trino-a-worker-74f6bd7497-tdz57 created=2026-11-13T09:46:00Z ready=2026-11-13T09:46:16Z
+  trino-a-worker-74f6bd7497-vw5nh created=2026-11-13T12:12:20Z ready=2026-11-13T12:12:32Z
+12:15:27 HPA events of trino-a:
+  2026-11-13T12:14:50Z New size: 2; reason: All metrics below target
+  2026-11-13T12:15:20Z New size: 6; reason: external metric s0-metric-api-workers(&LabelSelector{MatchLabels:map[string]string{scaledobject.keda.sh/name: trino-a-worker,},MatchExpressions:[]LabelSelectorRequirement{},}) above target
+12:15:30 reservations back to 0: {"a": {"active": 2, "predictor": 2, "reservations": 0}, "b": {"active": 2, "predictor": 2, "reservations": 0}}
+12:15:30 == mode bounded40: waiting until both clusters are idle
+12:15:40 learn: {"query_id":"20261113_121532_06199_qbfvt","state":"FAILED","error":"EXCEEDED_LOCAL_MEMORY_LIMIT: Query excee","peak_user_memory_gib":1.6,"workers_used":2}
+12:15:41 predictor-a: {"known":true,"runs":1,"memoryFailures":1,"predictedPeakGiB":3.2,"requiredWorkers":5,"basis":"memory_failure_growth"}
+12:17:32 bounded40: sent to http://envoy:10003 (mode bounded:40)
+12:18:10 bounded40: ended FINISHED 
+{"tag":"bounded40","mode":"bounded:40","query_id":"20261113_121753_06288_qbfvt","state":"FINISHED","error":"","gate_hold_ms":20632,"client_first_s":20.657,"trino_wait":"4.63ms","elapsed_time":"16.22s","peak_user_memory_gib":3.37,"workers_used":5,"workers_before":2,"workers_after":5,"required_workers_count":null}
+12:18:11 trino-a worker pods:
+  trino-a-worker-74f6bd7497-2pgbx created=2026-11-13T12:15:20Z ready=2026-11-13T12:15:39Z
+  trino-a-worker-74f6bd7497-789b7 created=2026-11-13T12:15:20Z ready=2026-11-13T12:15:38Z
+  trino-a-worker-74f6bd7497-g9tvl created=2026-11-13T12:17:35Z ready=2026-11-13T12:17:48Z
+  trino-a-worker-74f6bd7497-hgl5j created=2026-11-13T09:46:16Z ready=2026-11-13T09:46:29Z
+  trino-a-worker-74f6bd7497-hsl5x created=2026-11-13T12:15:20Z ready=2026-11-13T12:15:38Z
+  trino-a-worker-74f6bd7497-jcrk2 created=2026-11-13T12:17:35Z ready=2026-11-13T12:17:48Z
+  trino-a-worker-74f6bd7497-qttsv created=2026-11-13T12:15:20Z ready=2026-11-13T12:15:38Z
+  trino-a-worker-74f6bd7497-tdz57 created=2026-11-13T09:46:00Z ready=2026-11-13T09:46:16Z
+  trino-a-worker-74f6bd7497-xxwpm created=2026-11-13T12:17:35Z ready=2026-11-13T12:17:48Z
+12:18:11 HPA events of trino-a:
+  2026-11-13T12:17:35Z New size: 5; reason: external metric s0-metric-api-workers(&LabelSelector{MatchLabels:map[string]string{scaledobject.keda.sh/name: trino-a-worker,},MatchExpressions:[]LabelSelectorRequirement{},}) above target
+  2026-11-13T12:17:20Z New size: 2; reason: All metrics below target
+  2026-11-13T12:15:20Z New size: 6; reason: external metric s0-metric-api-workers(&LabelSelector{MatchLabels:map[string]string{scaledobject.keda.sh/name: trino-a-worker,},MatchExpressions:[]LabelSelectorRequirement{},}) above target
+12:18:11 reservations back to 0: {"a": {"active": 5, "predictor": 2, "reservations": 0}, "b": {"active": 2, "predictor": 2, "reservations": 0}}
+12:18:11 == mode bounded5: waiting until both clusters are idle
+12:20:24 learn: {"query_id":"20261113_122018_06360_qbfvt","state":"FAILED","error":"EXCEEDED_LOCAL_MEMORY_LIMIT: Query excee","peak_user_memory_gib":1.64,"workers_used":2}
+12:20:26 predictor-a: {"known":true,"runs":1,"memoryFailures":1,"predictedPeakGiB":3.28,"requiredWorkers":5,"basis":"memory_failure_growth"}
+12:20:27 bounded5: sent to http://envoy:10003 (mode bounded:5)
+12:20:41 bounded5: ended FAILED EXCEEDED_LOCAL_MEMORY_LIMIT: Query exceeded per-node memory limit of 1GB [Allocated: 980.71MB, Delta: 49.88MB, Top Consumers: {HashBuilderOperator=955.31MB, LazyOutputBuffer=10.70MB, ScanFi
+{"tag":"bounded5","mode":"bounded:5","query_id":"20261113_122033_06372_qbfvt","state":"FAILED","error":"EXCEEDED_LOCAL_MEMORY_LIMIT: Query exceeded per-node memory ","gate_hold_ms":5000,"client_first_s":5.025,"trino_wait":"4.49ms","elapsed_time":"7.00s","peak_user_memory_gib":1.74,"workers_used":2,"workers_before":2,"workers_after":2,"required_workers_count":null}
+12:20:41 trino-a worker pods:
+  trino-a-worker-74f6bd7497-4sqq5 created=2026-11-13T12:20:35Z ready=-
+  trino-a-worker-74f6bd7497-g9tvl created=2026-11-13T12:17:35Z ready=2026-11-13T12:17:48Z
+  trino-a-worker-74f6bd7497-hgl5j created=2026-11-13T09:46:16Z ready=2026-11-13T09:46:29Z
+  trino-a-worker-74f6bd7497-jcrk2 created=2026-11-13T12:17:35Z ready=2026-11-13T12:17:48Z
+  trino-a-worker-74f6bd7497-tdz57 created=2026-11-13T09:46:00Z ready=2026-11-13T09:46:16Z
+  trino-a-worker-74f6bd7497-tlz7t created=2026-11-13T12:20:35Z ready=-
+  trino-a-worker-74f6bd7497-xkx2j created=2026-11-13T12:20:35Z ready=-
+  trino-a-worker-74f6bd7497-xxwpm created=2026-11-13T12:17:35Z ready=2026-11-13T12:17:48Z
+12:20:41 HPA events of trino-a:
+  2026-11-13T12:20:35Z New size: 5; reason: external metric s0-metric-api-workers(&LabelSelector{MatchLabels:map[string]string{scaledobject.keda.sh/name: trino-a-worker,},MatchExpressions:[]LabelSelectorRequirement{},}) above target
+  2026-11-13T12:20:05Z New size: 2; reason: All metrics below target
+  2026-11-13T12:15:20Z New size: 6; reason: external metric s0-metric-api-workers(&LabelSelector{MatchLabels:map[string]string{scaledobject.keda.sh/name: trino-a-worker,},MatchExpressions:[]LabelSelectorRequirement{},}) above target
+12:20:41 reservations back to 0: {"a": {"active": 2, "predictor": 2, "reservations": 0}, "b": {"active": 2, "predictor": 2, "reservations": 0}}
+12:20:42 gate stats after: {"caller_gone":0,"hold_caller_gone":0,"hold_ms_total":25632,"hold_nodes_error":0,"hold_time_passed":1,"hold_workers_ready":1,"known":5,"mode_bounded":2,"mode_signal":2,"mode_wait":1,"predictor_errors":0,"predictor_timeouts":0,"requests":5,"reservation_delete_errors":0,"reservations_deleted":0,"skipped":0,"unknown":0}
+12:20:42 gate log, bounded holds:
+  2026/11/13 12:17:53 group a mode bounded:40: required 5 workers, active 5, held 20632 ms: workers ready
+  2026/11/13 12:20:33 group a mode bounded:5: required 5 workers, active 2, held 5000 ms: time passed
+12:20:42 query_history in history_a (state, error, peak GiB, session properties):
+  20261113_121157_06092_qbfvt | FAILED | EXCEEDED_LOCAL_MEMORY_LIMIT | 1.85 | {"join_distribution_type":"PARTITIONED","task_concurrency":"4"}
+  20261113_121208_06097_qbfvt | FINISHED | - | 3.34 | {"join_distribution_type":"PARTITIONED","required_workers_count":"6","required_workers_max_wait_time":"10m","task_concurrency":"4"}
+  20261113_121459_06178_qbfvt | FAILED | EXCEEDED_LOCAL_MEMORY_LIMIT | 1.75 | {"join_distribution_type":"PARTITIONED","task_concurrency":"4"}
+  20261113_121509_06183_qbfvt | FAILED | EXCEEDED_LOCAL_MEMORY_LIMIT | 1.77 | {"join_distribution_type":"PARTITIONED","task_concurrency":"4"}
+  20261113_121518_06190_qbfvt | FAILED | EXCEEDED_LOCAL_MEMORY_LIMIT | 1.81 | {"join_distribution_type":"PARTITIONED","task_concurrency":"4"}
+  20261113_121532_06199_qbfvt | FAILED | EXCEEDED_LOCAL_MEMORY_LIMIT | 1.60 | {"join_distribution_type":"PARTITIONED","task_concurrency":"4"}
+  20261113_121753_06288_qbfvt | FINISHED | - | 3.37 | {"join_distribution_type":"PARTITIONED","task_concurrency":"4"}
+  20261113_122018_06360_qbfvt | FAILED | EXCEEDED_LOCAL_MEMORY_LIMIT | 1.64 | {"join_distribution_type":"PARTITIONED","task_concurrency":"4"}
+  20261113_122033_06372_qbfvt | FAILED | EXCEEDED_LOCAL_MEMORY_LIMIT | 1.74 | {"join_distribution_type":"PARTITIONED","task_concurrency":"4"}
+12:20:42 waiting until both clusters are idle again
+12:20:43 idle: {"a": {"active": 2, "predictor": 2, "reservations": 0}, "b": {"active": 2, "predictor": 2, "reservations": 0}}
+12:20:43 timeline: /home/ubuntu/orca/workspaces/trino/memory-history-poc/poc/memory-history/lab/results/modes-kind-timeline.log
+12:20:43 queries:  /home/ubuntu/orca/workspaces/trino/memory-history-poc/poc/memory-history/lab/results/modes-kind-runs.jsonl
+exit=0

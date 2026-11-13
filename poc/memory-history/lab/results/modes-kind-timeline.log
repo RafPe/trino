@@ -1,0 +1,98 @@
+12:11:55 == mode wait: waiting until both clusters are idle
+12:11:57 a: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":2,"coordinator:active":1}
+12:12:04 a: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":2}
+12:12:07 wait: sent to http://envoy:10000 (mode wait)
+12:12:10 a: predictor=6 resv=1 hpa=2 ready_pods=2 active=2 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":2}
+12:12:16 a: predictor=6 resv=1 hpa=2 ready_pods=2 active=2 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":2,"coordinator:active":1}
+12:12:22 a: predictor=6 resv=1 hpa=6 ready_pods=2 active=2 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":2,"coordinator:active":1}
+12:12:28 a: predictor=6 resv=1 hpa=6 ready_pods=2 active=2 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":2}
+12:12:34 a: predictor=6 resv=1 hpa=6 ready_pods=6 active=2 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":2,"coordinator:active":1}
+12:12:42 a: predictor=6 resv=1 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":6}
+12:12:50 a: predictor=6 resv=1 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":6}
+12:12:57 a: predictor=6 resv=1 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":6,"coordinator:active":1}
+12:12:57 wait: ended FINISHED 
+12:12:58 == mode signal: waiting until both clusters are idle
+12:13:03 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":6}
+12:13:09 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":6,"coordinator:active":1}
+12:13:15 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":6}
+12:13:21 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":6,"coordinator:active":1}
+12:13:27 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":6}
+12:13:33 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":6,"coordinator:active":1}
+12:13:39 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":6}
+12:13:45 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":6}
+12:13:51 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":6}
+12:13:57 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":6,"coordinator:active":1}
+12:14:03 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":6}
+12:14:09 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":6,"coordinator:active":1}
+12:14:15 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":6}
+12:14:21 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":6}
+12:14:28 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":6,"coordinator:active":1}
+12:14:34 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":6,"coordinator:active":1}
+12:14:40 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":6,"coordinator:active":1}
+12:14:46 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":6}
+12:14:52 a: predictor=2 resv=0 hpa=2 ready_pods=2 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":6}
+12:14:58 a: predictor=2 resv=0 hpa=2 ready_pods=2 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":6,"coordinator:active":1}
+12:15:05 a: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:shutting_down":4,"worker:active":2,"coordinator:active":1}
+12:15:08 signal-1: sent to http://envoy:10000 (mode signal)
+12:15:12 a: predictor=6 resv=1 hpa=2 ready_pods=2 active=2 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":2,"worker:shutting_down":4,"coordinator:active":1}
+12:15:16 signal-1: ended FAILED EXCEEDED_LOCAL_MEMORY_LIMIT: Query exceeded per-node memory limit of 1GB [Allocated: 1004.04MB, Delta: 49.94MB, Top Consumers: {HashBuilderOperator=982.69MB, ScanFilterAndProjectOperator-Co
+12:15:17 signal-2: sent to http://envoy:10000 (mode signal)
+12:15:18 a: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":2,"coordinator:active":1,"worker:shutting_down":4}
+12:15:25 a: predictor=6 resv=1 hpa=6 ready_pods=2 active=2 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:shutting_down":4,"worker:active":2,"coordinator:active":1}
+12:15:27 signal-2: ended FAILED EXCEEDED_LOCAL_MEMORY_LIMIT: Query exceeded per-node memory limit of 1GB [Allocated: 1019.23MB, Delta: 49.88MB, Top Consumers: {HashBuilderOperator=1001.25MB, LazyOutputBuffer=7.71MB, ScanF
+12:15:30 == mode bounded40: waiting until both clusters are idle
+12:15:32 a: predictor=2 resv=0 hpa=6 ready_pods=2 active=2 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:shutting_down":4,"coordinator:active":1,"worker:active":2}
+12:15:39 a: predictor=2 resv=0 hpa=6 ready_pods=2 active=2 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":2,"worker:shutting_down":4,"coordinator:active":1}
+12:15:45 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=3 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:shutting_down":4,"worker:active":3,"coordinator:active":1}
+12:15:52 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":6,"worker:shutting_down":4}
+12:15:58 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:shutting_down":4,"worker:active":6}
+12:16:04 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:inactive":4,"worker:active":6}
+12:16:10 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:inactive":4,"coordinator:active":1,"worker:active":6}
+12:16:16 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:inactive":4,"worker:active":6}
+12:16:22 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:inactive":4,"worker:active":6}
+12:16:29 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":6,"coordinator:active":1,"worker:inactive":4}
+12:16:35 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:inactive":4,"coordinator:active":1,"worker:active":6}
+12:16:41 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":6,"worker:inactive":4}
+12:16:47 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":6,"coordinator:active":1}
+12:16:53 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":6}
+12:16:59 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":6}
+12:17:05 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":6,"coordinator:active":1}
+12:17:11 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":6,"coordinator:active":1}
+12:17:17 a: predictor=2 resv=0 hpa=6 ready_pods=6 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":6,"coordinator:active":1}
+12:17:23 a: predictor=2 resv=0 hpa=2 ready_pods=2 active=6 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":6,"coordinator:active":1}
+12:17:29 a: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":2,"coordinator:active":1,"worker:shutting_down":4}
+12:17:32 bounded40: sent to http://envoy:10003 (mode bounded:40)
+12:17:35 a: predictor=5 resv=1 hpa=2 ready_pods=2 active=2 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:shutting_down":4,"worker:active":2}
+12:17:42 a: predictor=5 resv=1 hpa=5 ready_pods=2 active=2 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":2,"worker:shutting_down":4}
+12:17:48 a: predictor=5 resv=1 hpa=5 ready_pods=2 active=2 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:shutting_down":4,"worker:active":2,"coordinator:active":1}
+12:17:56 a: predictor=5 resv=1 hpa=5 ready_pods=5 active=5 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:shutting_down":4,"worker:active":5,"coordinator:active":1}
+12:18:04 a: predictor=5 resv=1 hpa=5 ready_pods=5 active=5 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":5,"worker:shutting_down":4}
+12:18:10 bounded40: ended FINISHED 
+12:18:11 a: predictor=5 resv=1 hpa=5 ready_pods=5 active=5 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:shutting_down":4,"worker:active":5}
+12:18:11 == mode bounded5: waiting until both clusters are idle
+12:18:17 a: predictor=2 resv=0 hpa=5 ready_pods=5 active=5 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:shutting_down":4,"worker:active":5,"coordinator:active":1}
+12:18:23 a: predictor=2 resv=0 hpa=5 ready_pods=5 active=5 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:shutting_down":4,"coordinator:active":1,"worker:active":5}
+12:18:29 a: predictor=2 resv=0 hpa=5 ready_pods=5 active=5 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:inactive":4,"coordinator:active":1,"worker:active":5}
+12:18:35 a: predictor=2 resv=0 hpa=5 ready_pods=5 active=5 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:inactive":4,"coordinator:active":1,"worker:active":5}
+12:18:41 a: predictor=2 resv=0 hpa=5 ready_pods=5 active=5 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:inactive":4,"coordinator:active":1,"worker:active":5}
+12:18:47 a: predictor=2 resv=0 hpa=5 ready_pods=5 active=5 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":5,"worker:inactive":4,"coordinator:active":1}
+12:18:53 a: predictor=2 resv=0 hpa=5 ready_pods=5 active=5 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":5,"worker:inactive":4,"coordinator:active":1}
+12:18:59 a: predictor=2 resv=0 hpa=5 ready_pods=5 active=5 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":5,"worker:inactive":4}
+12:19:05 a: predictor=2 resv=0 hpa=5 ready_pods=5 active=5 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:inactive":4,"worker:active":5}
+12:19:11 a: predictor=2 resv=0 hpa=5 ready_pods=5 active=5 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":5,"worker:inactive":4}
+12:19:17 a: predictor=2 resv=0 hpa=5 ready_pods=5 active=5 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:inactive":1,"coordinator:active":1,"worker:active":5}
+12:19:23 a: predictor=2 resv=0 hpa=5 ready_pods=5 active=5 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":5}
+12:19:29 a: predictor=2 resv=0 hpa=5 ready_pods=5 active=5 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":5,"coordinator:active":1}
+12:19:35 a: predictor=2 resv=0 hpa=5 ready_pods=5 active=5 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":5}
+12:19:41 a: predictor=2 resv=0 hpa=5 ready_pods=5 active=5 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":5}
+12:19:47 a: predictor=2 resv=0 hpa=5 ready_pods=5 active=5 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":5}
+12:19:53 a: predictor=2 resv=0 hpa=5 ready_pods=5 active=5 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":5,"coordinator:active":1}
+12:19:59 a: predictor=2 resv=0 hpa=5 ready_pods=5 active=5 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:active":5}
+12:20:05 a: predictor=2 resv=0 hpa=5 ready_pods=5 active=5 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":5,"coordinator:active":1}
+12:20:11 a: predictor=2 resv=0 hpa=2 ready_pods=2 active=5 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":5,"coordinator:active":1}
+12:20:17 a: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:shutting_down":3,"coordinator:active":1,"worker:active":2}
+12:20:24 a: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:active":2,"coordinator:active":1,"worker:shutting_down":3}
+12:20:27 bounded5: sent to http://envoy:10003 (mode bounded:5)
+12:20:30 a: predictor=5 resv=1 hpa=2 ready_pods=2 active=2 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"worker:shutting_down":3,"worker:active":2,"coordinator:active":1}
+12:20:38 a: predictor=5 resv=1 hpa=5 ready_pods=2 active=2 | b: predictor=2 resv=0 hpa=2 ready_pods=2 active=2 | a nodes: {"coordinator:active":1,"worker:shutting_down":3,"worker:active":2}
+12:20:41 bounded5: ended FAILED EXCEEDED_LOCAL_MEMORY_LIMIT: Query exceeded per-node memory limit of 1GB [Allocated: 980.71MB, Delta: 49.88MB, Top Consumers: {HashBuilderOperator=955.31MB, LazyOutputBuffer=10.70MB, ScanFi

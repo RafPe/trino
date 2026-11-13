@@ -1,13 +1,16 @@
 """Helpers for demo-heavy.sh and failopen-check.sh. They run in the bench pod. Standard library only.
 
   python /bench/heavy.py query --url URL --coordinator URL [--group G] [--catalog C] [--schema S]
-                               [--session "a=b,c=d"] [--tag LABEL]  < query.sql
+                               [--session "a=b,c=d"] [--tag LABEL] [--gate-mode MODE] [--client-tags TAGS]  < query.sql
       Runs one query with the REST protocol and prints one JSON line: query id, state, error,
       client times, and from GET /v1/query/<id> on the coordinator: the times (create, execution
-      start, end), the time it waited for workers, the peak memory and the session properties.
+      start, end), the time it waited for workers, the peak memory, the session properties and the
+      number of workers that ran its tasks. --gate-mode sends X-Memory-Gate-Mode, --client-tags
+      sends X-Trino-Client-Tags.
 
-  python /bench/heavy.py sample
+  python /bench/heavy.py sample [--states]
       Prints one JSON line: active workers in Trino and the predictor value, for cluster a and b.
+      --states adds the number of nodes for each role and state (for example "worker:shutting_down").
 
   python /bench/heavy.py predict --predictor URL --catalog C --schema S < query.sql
       POST /v1/predict (no reservation). Prints the answer.
@@ -22,6 +25,7 @@ import urllib.parse
 COORDINATORS = {"a": "http://trino-a:8080", "b": "http://trino-b:8080"}
 PREDICTORS = {"a": "http://predictor-a:8090", "b": "http://predictor-b:8090"}
 NODES_SQL = "SELECT count(*) FROM system.runtime.nodes WHERE coordinator = false AND state = 'active'"
+STATES_SQL = "SELECT coordinator, state, count(*) FROM system.runtime.nodes GROUP BY 1, 2"
 
 
 def request(method, url, body=None, headers=None, timeout=900):
@@ -70,6 +74,21 @@ def gib(value):
     return value
 
 
+def workers_used(info):
+    """The number of nodes that ran tasks of the query, for each stage and in total (None if the info has no tasks)."""
+    stages = (info.get("stages") or {}).get("stages") or []
+    per_stage = {}
+    nodes = set()
+    for stage in stages:
+        stage_nodes = {(task.get("taskStatus") or {}).get("nodeId") for task in stage.get("tasks") or []} - {None}
+        if stage_nodes:
+            per_stage[str(stage.get("stageId", "")).rsplit(".", 1)[-1]] = len(stage_nodes)
+            nodes |= stage_nodes
+    if not nodes:
+        return None
+    return {"total": len(nodes), "per_stage": per_stage}
+
+
 def cmd_query(args):
     sql = sys.stdin.read().strip().rstrip(";")
     headers = {"X-Trino-User": "lab", "X-Trino-Source": "mhlab-heavy", "X-Trino-Catalog": args.catalog,
@@ -78,6 +97,10 @@ def cmd_query(args):
         headers["X-Trino-Routing-Group"] = args.group
     if args.session:
         headers["X-Trino-Session"] = args.session
+    if args.gate_mode:
+        headers["X-Memory-Gate-Mode"] = args.gate_mode
+    if args.client_tags:
+        headers["X-Trino-Client-Tags"] = args.client_tags
     submitted = time.time()
     out = {"tag": args.tag, "url": args.url, "group": args.group, "submitted": time.strftime("%H:%M:%S", time.gmtime(submitted))}
     try:
@@ -104,23 +127,29 @@ def cmd_query(args):
             execution_time=stats.get("executionTime"),
             peak_user_memory_gib=gib(stats.get("peakUserMemoryReservation")),
             session=info.get("session", {}).get("systemProperties", {}),
+            client_tags=info.get("session", {}).get("clientTags", []),
+            workers_used=workers_used(info),
         )
     else:
         out["query_info"] = f"HTTP {status}"
     print(json.dumps(out))
 
 
-def scalar(base, sql):
+def rows(base, sql):
     _, body = request("POST", base + "/v1/statement", sql.encode(), {"X-Trino-User": "lab-sampler", "X-Trino-Source": "mhlab-sampler"}, timeout=10)
     result = json.loads(body)
-    value = None
+    out = []
     while True:
-        if result.get("data"):
-            value = result["data"][0][0]
+        out.extend(result.get("data") or [])
         if not result.get("nextUri"):
-            return value
+            return out
         _, body = request("GET", result["nextUri"], headers={"X-Trino-User": "lab-sampler"}, timeout=10)
         result = json.loads(body)
+
+
+def scalar(base, sql):
+    data = rows(base, sql)
+    return data[0][0] if data else None
 
 
 def cmd_sample(args):
@@ -135,6 +164,11 @@ def cmd_sample(args):
         except (OSError, ValueError, http.client.HTTPException):
             predictor = {}
         out[c] = {"active": active, "predictor": predictor.get("workers"), "reservations": predictor.get("reservations")}
+        if args.states:
+            try:
+                out[c]["nodes"] = {f"{'coordinator' if coordinator else 'worker'}:{state}": n for coordinator, state, n in rows(COORDINATORS[c], STATES_SQL)}
+            except (OSError, ValueError, http.client.HTTPException):
+                out[c]["nodes"] = None
     print(json.dumps(out))
 
 
@@ -156,6 +190,9 @@ def main():
     parser.add_argument("--schema", default="sf5")
     parser.add_argument("--session")
     parser.add_argument("--tag", default="")
+    parser.add_argument("--states", action="store_true", help="sample: also count the nodes for each role and state")
+    parser.add_argument("--gate-mode")
+    parser.add_argument("--client-tags")
     args = parser.parse_args()
     {"query": cmd_query, "sample": cmd_sample, "predict": cmd_predict}[args.command](args)
 

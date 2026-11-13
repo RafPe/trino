@@ -418,3 +418,105 @@ On exit it always sets the gate back to 1 replica with no delay. Run it when no 
   are not used. I added it in `values-gateway-external.yaml`.
 - The Trino image has curl, but no grep, sed or python. `query.sh` therefore runs each request with
   curl in the pod and reads the JSON on the host with jq.
+
+## Wait modes (2026-11-13): Contract L6, milestone L8 on kind
+
+### Changes
+
+- `manifests/gate.yaml`: `GATE_DEFAULT_MODE=wait`, `GATE_MAX_BOUNDED_SECONDS=60`, `GATE_NODES_A=http://trino-a:8080`,
+  `GATE_NODES_B=http://trino-b:8080`. The gate had no coordinator address before, so `bounded` could not hold.
+- `envoy.yaml`: listener `gated-bounded` on 10003, the same as `gated` but with a 65 s `ext_authz` time limit and
+  `x-memory-gate-mode` in `allowed_headers`. `gated` did not change. `manifests/envoy.yaml`: container and Service
+  port 10003 (`gated-bounded`).
+- `heavy.py`: `--gate-mode` (sends `X-Memory-Gate-Mode`), `--client-tags`, the number of workers that ran tasks of
+  the query (from `/v1/query/<id>`), and `sample --states` (nodes for each role and state).
+- `demo-modes.sh`: new. It writes `results/modes-kind-runs.jsonl` and `results/modes-kind-timeline.log`.
+  I kept its console output in `results/modes-kind-log.txt`.
+
+`up.sh` loaded the new gate image, and also a newer predictor image that was built on the host by other work at
+11:27. So predictor-a and predictor-b restarted with that image. I did not change the predictor.
+
+### How I ran it
+
+`./up.sh` (twice: the second time to load the changed `heavy.py`), then `./demo-modes.sh` from 12:11 to 12:20 UTC.
+For each mode, a new shape (q21 at `tpch.sf5`, alias `numwait_m1794571915_<mode>`, client session
+`join_distribution_type=PARTITIONED,task_concurrency=4`). First the shape ran directly on trino-a with 2 workers and
+failed on memory, so predictor-a knew it as heavy (5 or 6 workers, basis `memory_failure_growth`). Then the run
+in the mode, from 2 active workers, HPA at 2 and 0 reservations. `wait` and `signal` went through `gated` with the
+client tag `gate_mode=…`, because `gated` does not pass the header to the gate. `bounded:40` and `bounded:5` went
+through `gated-bounded` with the header.
+
+### Results
+
+| Run | Query id | Required | Hold in the gate | Trino wait | Outcome | Peak | Workers that ran it | Active workers of A before → after |
+|---|---|---|---|---|---|---|---|---|
+| wait | 20261113_121208_06097_qbfvt | 6 | 0 | 29.64 s | FINISHED, elapsed 48.5 s | 3.34 GiB | 6 | 2 → 6 |
+| signal 1 | 20261113_121509_06183_qbfvt | 6 | 0 | 5 ms | FAILED, EXCEEDED_LOCAL_MEMORY_LIMIT after 6.3 s | 1.77 GiB | 2 | 2 → 2 |
+| signal 2 (sent 1 s after signal 1 ended) | 20261113_121518_06190_qbfvt | 6 | 0 | 5 ms | FAILED, EXCEEDED_LOCAL_MEMORY_LIMIT after 7.9 s | 1.81 GiB | 2 | 2 → 2 |
+| bounded:40 | 20261113_121753_06288_qbfvt | 5 | 20.63 s, workers ready | 5 ms | FINISHED, elapsed 16.2 s (client 36.9 s) | 3.37 GiB | 5 | 2 → 5 |
+| bounded:5 | 20261113_122033_06372_qbfvt | 5 | 5.00 s, time passed | 4 ms | FAILED, EXCEEDED_LOCAL_MEMORY_LIMIT after 7.0 s | 1.74 GiB | 2 | 2 → 2 |
+
+`query_history.session_properties` in `history_a`: only the `wait` row has `required_workers_count` (6) and
+`required_workers_max_wait_time`. The `signal` and `bounded` rows have only the two client properties. Cluster B
+stayed at predictor 2, 0 reservations, HPA 2, 2 ready pods and 2 active workers in all 84 timeline samples.
+Gate counters after the run: `mode_wait` 1, `mode_signal` 2, `mode_bounded` 2, `hold_workers_ready` 1,
+`hold_time_passed` 1, `hold_nodes_error` 0, `hold_ms_total` 25632, no predictor errors.
+
+Timeline (from `modes-kind-timeline.log`, HPA events and the query times):
+
+- **wait**: reservation 12:12:08, HPA 6 at 12:12:20, new pods Ready 12:12:32, 6 active by 12:12:42. Trino started
+  the query at 12:12:37.9. The HPA needed 12 s here (it reads the metric every 15 s).
+- **signal**: signal 1 got its reservation at 12:15:09 and failed at 12:15:15.7. The automatic release removed the
+  reservation with the failed row: the sample at 12:15:18 showed 0 reservations. Signal 2 was sent at 12:15:18. The
+  HPA went to 6 at 12:15:20. I cannot say which reservation it read. The new pods were not Ready when signal 2 ran,
+  so it also ran on 2 workers and failed. The 6 pods came up after both queries had failed, and went away after the
+  120 s window, without a query on them.
+- **bounded:40**: reservation 12:17:33, HPA 5 at 12:17:35, 5 active between 12:17:48 and 12:17:56. The gate answered
+  at 12:17:53 (after 26 worker-count reads in the two bounded runs, about one each second). The query started at
+  once and ran on 5 workers. Client time from send to end: 36.9 s, against 48.5 s for `wait`. The difference is
+  mostly the HPA delay (2 s against 12 s), so I do not read it as a gain of `bounded`.
+- **bounded:5**: reservation 12:20:28, the hold ended at 12:20:33 with 2 active workers, the query ran on 2 workers
+  and failed at 12:20:40. The HPA went to 5 at 12:20:35 and the pods came up after the query had failed.
+
+### Active workers only
+
+During the runs, 3 or 4 workers of earlier runs were still in graceful shutdown. `sample --states` showed for
+example `{"worker:active":2,"worker:shutting_down":4,"coordinator:active":1}` at 12:15:05, and the gate statement
+counted 2. In the `bounded:40` run, 4 workers were in `shutting_down` while the gate held: if the gate counted them,
+it would have answered at once on 2 active workers. It did not.
+
+### Not as expected
+
+- **signal, second run.** The expectation was that a second run right after finishes. It did not: it started 2 s
+  after the first failure, and new workers need about 25 s to become active. A run after the workers are active
+  would probably finish, but I did not run it.
+- **signal and the scale-up.** A heavy query that fails fast releases its reservation at once (the automatic release
+  sees the failed row). So the reservation of a `signal` query can live shorter than the HPA reads the metric (15 s).
+  In this run the cluster scaled, but only after both queries had failed, and nobody used the new workers.
+
+### What each mode costs and gives (kind, heavy query that needs 5 or 6 workers, 2 active)
+
+| Mode | Time before the query starts | Outcome for the query that is short of memory | Scale-up |
+|---|---|---|---|
+| `wait` | Trino holds it 29.6 s | finishes on 6 workers | yes, from the reservation |
+| `signal` | none | fails on 2 workers after 6 to 8 s; a retry right after also fails | yes, but late; it can be missed if the query fails before the HPA reads the metric |
+| `bounded:40` | the gate holds 20.6 s; Trino does not wait | finishes on 5 workers | yes |
+| `bounded:5` | the gate holds 5 s | fails on 2 workers | yes, after the query failed |
+
+What `signal` does: it starts the scale-up without a delay for the query. What it does not do: it does not protect
+the query that asked. Trino schedules the stages of that query on the workers that are active when it starts, and a
+join stage keeps that list. New workers do not help a query that already runs. `signal` helps only a later query,
+and only if the workers are active when that query starts.
+
+### Not checked on kind
+
+- `wait` and `signal` on `gated-bounded`, and `bounded` on `gated` (compose covers both).
+- A coordinator that does not answer during a hold (unit tests only).
+- Several held queries at the same time, and both clusters at the same time.
+- Each mode once only. The HPA delay (2 to 13 s) changes the times of each run.
+- `demo-modes.sh` waited between modes for 2 active workers, 2 ready pods and 0 reservations. After the last run I saw
+  that this check passed while the HPA had already asked for 5 pods. I added the check that the HPA is back at 2. I
+  did not run the script again after that change. Each run in the table did start with the HPA at 2 (see the HPA
+  events in `modes-kind-log.txt`).
+
+End state: `mhlab` runs, 2 active workers in each cluster, both predictors at 2 with 0 reservations.

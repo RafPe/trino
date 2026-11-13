@@ -1,3 +1,4 @@
 gate/bin/
 results/bench-compose-run1.jsonl
 results/bench-compose-after-run1.jsonl
+results/modes-compose-run1.jsonl

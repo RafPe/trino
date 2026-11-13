@@ -34,6 +34,13 @@ type config struct {
 	predictorTimeout time.Duration
 	delay            time.Duration
 	port             int
+	// Wait modes (Contract L6)
+	defaultMode       mode
+	groupModes        map[string]mode   // GATE_MODE_<GROUP>, only the groups that set a value the gate understands
+	maxBoundedSeconds int               // GATE_MAX_BOUNDED_SECONDS
+	nodes             map[string]string // GATE_NODES_<GROUP>: coordinator URL of the group, for the worker count
+	nodePoll          time.Duration     // time between two worker counts during a hold (1 s)
+	nodesTimeout      time.Duration     // time limit of one worker count (1 s)
 }
 
 func (c config) groupNames() []string {
@@ -85,6 +92,36 @@ func configFromEnv(getenv func(string) string) (config, error) {
 	if err != nil || cfg.port <= 0 {
 		return cfg, fmt.Errorf("PORT must be a positive integer")
 	}
+	cfg.maxBoundedSeconds, err = strconv.Atoi(env("GATE_MAX_BOUNDED_SECONDS", "60"))
+	if err != nil || cfg.maxBoundedSeconds < 0 {
+		return cfg, fmt.Errorf("GATE_MAX_BOUNDED_SECONDS must be a non-negative integer")
+	}
+	// A mode value that the gate does not understand is the same as no value (Contract L6).
+	cfg.defaultMode = mode{kind: modeWait}
+	if value := env("GATE_DEFAULT_MODE", ""); value != "" {
+		if m, ok := parseMode(value, cfg.maxBoundedSeconds); ok {
+			cfg.defaultMode = m
+		} else {
+			log.Printf("GATE_DEFAULT_MODE %q is not a mode; using wait", value)
+		}
+	}
+	cfg.groupModes = map[string]mode{}
+	cfg.nodes = map[string]string{}
+	for group := range cfg.groups {
+		name := groupEnvName(group)
+		if value := env("GATE_MODE_"+name, ""); value != "" {
+			if m, ok := parseMode(value, cfg.maxBoundedSeconds); ok {
+				cfg.groupModes[group] = m
+			} else {
+				log.Printf("GATE_MODE_%s %q is not a mode; ignored", name, value)
+			}
+		}
+		if value := env("GATE_NODES_"+name, ""); value != "" {
+			cfg.nodes[group] = strings.TrimRight(value, "/")
+		}
+	}
+	cfg.nodePoll = time.Second
+	cfg.nodesTimeout = time.Second
 	return cfg, nil
 }
 
@@ -99,6 +136,15 @@ type stats struct {
 	// Reservations that the predictor made for a caller that had already gone, and that the gate deleted
 	reservationsDeleted     atomic.Int64
 	reservationDeleteErrors atomic.Int64
+	// Wait modes: decisions for each mode, and how each hold of bounded ended
+	modeWait         atomic.Int64
+	modeSignal       atomic.Int64
+	modeBounded      atomic.Int64
+	holdWorkersReady atomic.Int64
+	holdTimePassed   atomic.Int64
+	holdNodesError   atomic.Int64
+	holdCallerGone   atomic.Int64
+	holdMillis       atomic.Int64
 }
 
 type gate struct {
@@ -138,6 +184,15 @@ func (g *gate) handleStats(w http.ResponseWriter, _ *http.Request) {
 		// Added counters; the counters above do not change
 		"reservations_deleted":      g.stats.reservationsDeleted.Load(),
 		"reservation_delete_errors": g.stats.reservationDeleteErrors.Load(),
+		// Wait modes (Contract L6)
+		"mode_wait":          g.stats.modeWait.Load(),
+		"mode_signal":        g.stats.modeSignal.Load(),
+		"mode_bounded":       g.stats.modeBounded.Load(),
+		"hold_workers_ready": g.stats.holdWorkersReady.Load(),
+		"hold_time_passed":   g.stats.holdTimePassed.Load(),
+		"hold_nodes_error":   g.stats.holdNodesError.Load(),
+		"hold_caller_gone":   g.stats.holdCallerGone.Load(),
+		"hold_ms_total":      g.stats.holdMillis.Load(),
 	})
 }
 
@@ -177,7 +232,8 @@ func (g *gate) handleRoute(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, response)
 		return
 	}
-	session := g.decide(r.Context(), group, properties.Body, optionalString(properties.DefaultCatalog), optionalString(properties.DefaultSchema))
+	m, _ := g.selectMode(r.Header, group)
+	session := g.decide(r.Context(), group, m, properties.Body, optionalString(properties.DefaultCatalog), optionalString(properties.DefaultSchema))
 	if session != "" {
 		response.ExternalHeaders[sessionHeader] = mergeSession(r.Header.Values(sessionHeader), session)
 	}
@@ -203,7 +259,8 @@ func (g *gate) handleEnvoyCheck(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	session := g.decide(r.Context(), group, string(body), r.Header.Get(catalogHeader), r.Header.Get(schemaHeader))
+	m, _ := g.selectMode(r.Header, group)
+	session := g.decide(r.Context(), group, m, string(body), r.Header.Get(catalogHeader), r.Header.Get(schemaHeader))
 	if session != "" {
 		w.Header().Set("x-trino-session", session)
 	}
@@ -241,7 +298,16 @@ type gateResponse struct {
 
 // decide calls POST /v1/gate on the predictor of the group. It returns the session properties
 // to add, encoded as an X-Trino-Session value, or "" for an unknown query and for every error.
-func (g *gate) decide(parent context.Context, group string, sql string, catalog string, schema string) string {
+// For a known query the predictor makes the reservation in every mode; only `wait` returns the properties.
+func (g *gate) decide(parent context.Context, group string, m mode, sql string, catalog string, schema string) string {
+	switch m.kind {
+	case modeSignal:
+		g.stats.modeSignal.Add(1)
+	case modeBounded:
+		g.stats.modeBounded.Add(1)
+	default:
+		g.stats.modeWait.Add(1)
+	}
 	if parent.Err() != nil {
 		// The caller (Trino Gateway or Envoy) gave up already. Do not make a reservation for it.
 		g.stats.callerGone.Add(1)
@@ -292,8 +358,44 @@ func (g *gate) decide(parent context.Context, group string, sql string, catalog 
 		g.stats.unknown.Add(1)
 		return ""
 	}
+	switch m.kind {
+	case modeWait:
+		g.stats.known.Add(1)
+		return session
+	case modeSignal:
+		g.stats.known.Add(1)
+		return ""
+	}
+	// bounded: hold the answer until the workers are there or the time passed, then add nothing.
+	required, err := strconv.Atoi(decision.SessionProperties["required_workers_count"])
+	if err != nil {
+		log.Printf("group %s: no valid required_workers_count in %v; the query passes now", group, decision.SessionProperties)
+		g.stats.known.Add(1)
+		return ""
+	}
+	start := time.Now()
+	end, active := g.hold(parent, group, required, time.Duration(m.seconds)*time.Second)
+	held := time.Since(start)
+	g.stats.holdMillis.Add(held.Milliseconds())
+	log.Printf("group %s mode %s: required %d workers, active %d, held %d ms: %s", group, m, required, active, held.Milliseconds(), end)
+	switch end {
+	case holdWorkersReady:
+		g.stats.holdWorkersReady.Add(1)
+	case holdTimePassed:
+		g.stats.holdTimePassed.Add(1)
+	case holdNodesError:
+		g.stats.holdNodesError.Add(1)
+	case holdCallerGone:
+		// Nobody gets the answer, and the query may run on another path. Delete the reservation, as above.
+		g.stats.holdCallerGone.Add(1)
+		g.stats.callerGone.Add(1)
+		if decision.ReservationID != nil && *decision.ReservationID != "" {
+			g.deleteReservation(group, *decision.ReservationID)
+		}
+		return ""
+	}
 	g.stats.known.Add(1)
-	return session
+	return ""
 }
 
 // deleteReservation calls DELETE /v1/reservations/{id} on the predictor of the group. Best effort:

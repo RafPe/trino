@@ -220,3 +220,111 @@ listener.
 - The cache has a fixed bound of 10,000 fingerprints. I did not measure its memory.
 - Concurrent cache misses for one fingerprint each read the database. I did not measure a burst of new fingerprints.
 - I did not measure the gate path on kind.
+
+## Wait modes (2026-11-13): Contract L6, milestone L8 on compose
+
+### What I found and what I changed
+
+The gate code for the three modes was there but not finished. I checked it against Contract L6 and kept it.
+
+- Gate: the modes, the selection order, the cap and the `/stats` counters matched the contract. I added unit
+  tests for a coordinator that answers too slowly, for the cap on `GATE_MODE_<GROUP>`, `GATE_DEFAULT_MODE` and the
+  client tag, and for the worker-count statement. `modes_test.go` and `gate_test.go` have 38 test functions, 60
+  results with the subtests. All pass with `-race`, also with `-count=3`.
+- I removed a stray binary `lab/gate/trino-memory-history-gate` (an output of `go build`, not in `.gitignore`).
+- `bench/modes.sh`: the history check stopped after the first row, because `docker compose exec` read the rest
+  of the loop input. I gave `psql` `/dev/null` as input and read the cases before the loop.
+- kind: the gate manifest had no `GATE_NODES_<GROUP>` and the Envoy manifest had no port 10003. I added both
+  (see NOTES-k8s.md).
+
+### Worker count
+
+The gate sends `SELECT count(*) FROM system.runtime.nodes WHERE coordinator = false AND state = 'active'` with
+`POST /v1/statement` to `GATE_NODES_<GROUP>` and follows `nextUri` (user `memory-gate`, 1 s limit for each read).
+On the running lab, `system.runtime.nodes` gave `coordinator-a true active` and two workers `false active`, and the
+statement gave 2. So the coordinator does not count. On kind, workers in graceful shutdown have the state
+`shutting_down` and do not count (see NOTES-k8s.md).
+`GET /v1/node` returns 404 on Trino 484, so there is no cheaper endpoint without SQL.
+
+Costs that I measured or saw:
+
+- One read is a full Trino query: 5 to 6 HTTP requests, 92 to 99 ms with curl from the host (15 reads), 53 to
+  55 ms inside the gate when warm. The first read after a gate start took more than 246 ms.
+- Each read is a row in `query_history` (the listener records every query), with user `memory-gate`.
+
+What a secured cluster needs for this read (not tested): HTTPS, and credentials for the gate user (password, JWT
+or a client certificate). Access control must let that user run a query and read `system.runtime.nodes`. The read
+goes into a resource group. If that group is full, the read waits, the 1 s limit ends it, and the gate answers at
+once without a hold. A dedicated resource group for the gate user avoids this.
+
+### Unknown header in Trino
+
+Envoy and Trino Gateway forward `X-Memory-Gate-Mode` to Trino. Trino ignores it. `SELECT 42` with
+`X-Memory-Gate-Mode: bounded:5` directly on coordinator A finished (`20261113_120043_00065_grn8d`). The header is
+not in the session of `/v1/query/<id>`, and the history row has no trace of it. The client tag `gate_mode=…` does
+reach Trino as a normal client tag. A resource group selector that matches client tags sees it.
+
+### Header on the `gated` listener
+
+The `gated` listener sends only `x-trino-*` and `content-type` to the gate (`allowed_headers`). So the gate does
+not see `X-Memory-Gate-Mode` on `gated`. I sent a known query with `X-Memory-Gate-Mode: signal`: on `gated` it got
+`required_workers_count=2` (default `wait`, `20261113_120727_00073_am6rx`), on `gated-bounded` it got nothing
+(`…00074_am6rx`). On `gated`, use the client tag. I did not change `gated`, as the task asked.
+
+### Checks (`bench/modes.sh`, fresh lab, 12:06)
+
+Commands: `gate/build.sh`, `compose/down.sh`, `compose/up.sh`, `bench/modes.sh`. Results:
+`results/modes-compose.jsonl` (run 2) and `results/modes-compose-run1.jsonl` (run 1, two minutes earlier).
+The light query needs 2 workers. The heavy shape needs 3 workers (peak 1.76 GB × 1.5), and compose has 2.
+"resv" = reservations of predictor-a before, after the first request, 1.5 s later, after the end.
+
+| Case | Path, how | Mode | First request | Trino wait | Session properties in `query_history` | resv | Result |
+|---|---|---|---|---|---|---|---|
+| 0 | envoy-gated, tag | wait | 8 ms | 4 ms | both gate properties | 0→1→1→0 | PASS |
+| 1 | envoy-gated, tag | signal | 7 ms | 3 ms | none | 0→1→1→0 | PASS |
+| 2 | envoy-gated, tag | bounded:10, light | 62 ms (hold 55 ms) | 3 ms | none | 0→1→1→0 | PASS |
+| 3 | gated-bounded, header | wait | 7 ms | 3 ms | both | 0→1→1→0 | PASS |
+| 4 | gated-bounded, header | signal | 7 ms | 4 ms | none | 0→1→1→0 | PASS |
+| 5 | gated-bounded, header | bounded:10, light | 60 ms (hold 53 ms) | 4 ms | none | 0→1→1→0 | PASS |
+| 6 | gated-bounded, header | bounded:8, heavy | 8008 ms (hold 8001 ms, time passed) | 3 ms | none (client property kept) | 0→1→1→0 | PASS, FINISHED after the hold |
+| 7 | envoy-gated, tag | bounded:8, heavy | 255 ms (Envoy limit) | 4 ms | none | 0→0→0→0 | PASS: caller gone, gate deleted the reservation |
+| 8 | gateway, header | wait | 40 ms | 4 ms | both | 0→1→1→0 | PASS |
+| 9 | gateway, header | signal | 38 ms | 4 ms | none | 0→1→1→0 | PASS |
+| 10 | gateway, tag | signal | 38 ms | 4 ms | none | 0→1→1→0 | PASS |
+| 11 | gated-bounded, no mode | default (wait) | 6 ms | 3 ms | both | 0→1→1→0 | PASS |
+
+All 12 history checks pass. The reservation was back to 0 within 0.5 to 2 s after each query.
+Gate counters after both runs: `hold_workers_ready` 3, `hold_time_passed` 2, `hold_caller_gone` 3,
+`reservations_deleted` 3, `predictor_errors` 0.
+
+Run 1 had 11 of 12. Case 2 (`bounded:10` on `gated`, enough workers) was the first worker-count read after the
+gate start. It took more than 246 ms, Envoy stopped at 250 ms, the gate deleted the reservation, and the query ran
+without a hold and without a reservation. So `bounded` on `gated` works only while one worker-count read is
+shorter than 250 ms. I did not change the case to match.
+
+Notes on the heavy case: the rendered query has a filter that gives no rows, so the run itself is light (peak 9 MB).
+The history of the shape is heavy, so the gate holds. The check shows the hold and that the query runs after it,
+not that a heavy query survives on 2 workers. That is the kind run.
+
+Before my run, the lab that was left running had 5 reservations on predictor-a that never went away, and every case
+of the earlier partial run failed on "no reservation after it". I could not list them (`GET /v1/reservations` is
+not supported). After a fresh start the count went back to 0 after every case, so I did not find the cause.
+
+`bench/run.sh`: I did not run the full timed bench again (it rewrites the bench reports). I ran its steps with small
+counts on the new gate: `learn`, `checks` (all 17 pass), `run` with 10/5/1 runs, `w4` with the gate stopped, and
+`report.py`. All worked. The gate `wait` mode is the default, so the bench behaves as before.
+
+### What each mode costs and gives
+
+| Mode | Added time on the first request | Query on too few workers | Autoscaler signal |
+|---|---|---|---|
+| `wait` | none in the gate; Trino holds the query until the workers joined (up to `required_workers_max_wait_time`) | does not start on too few workers | yes |
+| `signal` | none | starts at once with the workers that are there; a memory-heavy query can fail | yes |
+| `bounded:n` | one worker-count read (about 55 ms warm) when the workers are there; up to n s when they are not | starts after n s with the workers that are there | yes, but deleted when the caller gives up during the hold |
+
+### Not checked on compose
+
+- A worker count that changes during the hold (compose has no scaler). The unit tests cover it.
+- A coordinator that is down during a hold on the real lab. The unit tests cover refused, error status and slow.
+- `bounded` on the Trino Gateway path (the contract excludes it; its time limit is 1 s).
+- Several held queries at the same time. Each hold reads the count on its own, once per second.
