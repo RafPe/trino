@@ -14,15 +14,28 @@ import (
 
 const knownSQL = "SELECT count(*) FROM orders WHERE orderkey > 100"
 
-// fakePredictor answers POST /v1/gate. A SQL text that contains "orders" is known.
+// fakePredictor answers POST /v1/gate and DELETE /v1/reservations/{id}. A SQL text that contains "orders" is known.
 type fakePredictor struct {
-	mu       sync.Mutex
-	requests []gateRequest
-	status   int
-	delay    time.Duration
+	mu           sync.Mutex
+	requests     []gateRequest
+	deleted      []string
+	status       int
+	delay        time.Duration
+	deleteStatus int
 }
 
 func (p *fakePredictor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if id, ok := strings.CutPrefix(r.URL.Path, "/v1/reservations/"); ok && r.Method == http.MethodDelete {
+		p.mu.Lock()
+		p.deleted = append(p.deleted, id)
+		status := p.deleteStatus
+		p.mu.Unlock()
+		if status == 0 {
+			status = http.StatusNoContent
+		}
+		w.WriteHeader(status)
+		return
+	}
 	if r.Method != http.MethodPost || r.URL.Path != "/v1/gate" {
 		http.NotFound(w, r)
 		return
@@ -63,6 +76,12 @@ func (p *fakePredictor) calls() []gateRequest {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]gateRequest(nil), p.requests...)
+}
+
+func (p *fakePredictor) deletes() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.deleted...)
 }
 
 type fixture struct {
@@ -410,8 +429,86 @@ func TestCallerGoneIsNotAPredictorError(t *testing.T) {
 	for g.stats.callerGone.Load() == 0 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if g.stats.callerGone.Load() != 1 || g.stats.predictorErrors.Load() != 0 || len(a.calls()) != 0 {
-		t.Errorf("caller_gone=%d predictor_errors=%d predictor calls=%d", g.stats.callerGone.Load(), g.stats.predictorErrors.Load(), len(a.calls()))
+	// The gate notices the gone caller before or after the predictor call, depending on when the server
+	// sees the closed connection. If it called the predictor, it must have deleted the reservation.
+	deadline = time.Now().Add(2 * time.Second)
+	for len(a.deletes()) < len(a.calls()) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if g.stats.callerGone.Load() != 1 || g.stats.predictorErrors.Load() != 0 || len(a.deletes()) != len(a.calls()) {
+		t.Errorf("caller_gone=%d predictor_errors=%d predictor calls=%d deletes=%d",
+			g.stats.callerGone.Load(), g.stats.predictorErrors.Load(), len(a.calls()), len(a.deletes()))
+	}
+}
+
+// waitFor polls until cond is true or 3 s have passed.
+func waitFor(cond func() bool) bool {
+	deadline := time.Now().Add(3 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return true
+}
+
+func TestCallerGoneAfterReservationDeletesIt(t *testing.T) {
+	for _, path := range []string{"/gateway/route", "/envoy/check/a/v1/statement"} {
+		t.Run(path, func(t *testing.T) {
+			f := newFixture(t, time.Second)
+			// The predictor answers after the caller has given up, but within the gate timeout
+			f.a.set(0, 300*time.Millisecond)
+			body := knownSQL
+			if path == "/gateway/route" {
+				body = routeBody(knownSQL)
+			}
+			client := &http.Client{Timeout: 100 * time.Millisecond}
+			if _, err := client.Post(f.srv.URL+path, "application/json", strings.NewReader(body)); err == nil {
+				t.Fatal("want a client timeout")
+			}
+			if !waitFor(func() bool { return f.gate.stats.reservationsDeleted.Load() == 1 }) {
+				t.Fatalf("reservation not deleted: stats %v deletes %v", f.stats(t), f.a.deletes())
+			}
+			if got := f.a.deletes(); len(got) != 1 || got[0] != "r-1" {
+				t.Errorf("deletes = %v, want [r-1]", got)
+			}
+			s := f.stats(t)
+			if s["caller_gone"] != 1 || s["known"] != 0 || s["predictor_errors"] != 0 || s["reservation_delete_errors"] != 0 {
+				t.Errorf("stats = %v", s)
+			}
+		})
+	}
+}
+
+func TestCallerGoneDeleteFailureIsCounted(t *testing.T) {
+	f := newFixture(t, time.Second)
+	f.a.set(0, 300*time.Millisecond)
+	f.a.mu.Lock()
+	f.a.deleteStatus = http.StatusInternalServerError
+	f.a.mu.Unlock()
+	client := &http.Client{Timeout: 100 * time.Millisecond}
+	if _, err := client.Post(f.srv.URL+"/gateway/route", "application/json", strings.NewReader(routeBody(knownSQL))); err == nil {
+		t.Fatal("want a client timeout")
+	}
+	if !waitFor(func() bool { return f.gate.stats.reservationDeleteErrors.Load() == 1 }) {
+		t.Fatalf("delete error not counted: stats %v", f.stats(t))
+	}
+	if s := f.stats(t); s["reservations_deleted"] != 0 || s["predictor_errors"] != 0 {
+		t.Errorf("stats = %v", s)
+	}
+}
+
+func TestAnsweredCallerKeepsReservation(t *testing.T) {
+	f := newFixture(t, 200*time.Millisecond)
+	f.route(t, knownSQL, nil)
+	f.envoyCheck(t, http.MethodPost, "/envoy/check/a/v1/statement", knownSQL, nil)
+	time.Sleep(50 * time.Millisecond)
+	if got := f.a.deletes(); len(got) != 0 {
+		t.Errorf("deletes = %v, want none", got)
+	}
+	if s := f.stats(t); s["known"] != 2 || s["reservations_deleted"] != 0 {
+		t.Errorf("stats = %v", s)
 	}
 }
 

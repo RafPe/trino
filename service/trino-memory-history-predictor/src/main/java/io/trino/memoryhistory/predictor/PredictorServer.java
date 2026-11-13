@@ -54,7 +54,7 @@ public class PredictorServer
     private static final long DEFAULT_TTL_SECONDS = 900;
     private static final String RESERVATIONS_PATH = "/v1/reservations";
     // Predictions (also those of /v1/gate) read the database; bound them so a stalled database cannot pile up connections
-    private static final int MAX_CONCURRENT_PREDICTIONS = 16;
+    static final int MAX_CONCURRENT_PREDICTIONS = 16;
 
     private final PredictorService predictor;
     private final Reservations reservations;

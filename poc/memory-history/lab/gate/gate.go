@@ -96,6 +96,9 @@ type stats struct {
 	predictorTimeouts atomic.Int64
 	skipped           atomic.Int64
 	callerGone        atomic.Int64
+	// Reservations that the predictor made for a caller that had already gone, and that the gate deleted
+	reservationsDeleted     atomic.Int64
+	reservationDeleteErrors atomic.Int64
 }
 
 type gate struct {
@@ -132,6 +135,9 @@ func (g *gate) handleStats(w http.ResponseWriter, _ *http.Request) {
 		"predictor_timeouts": g.stats.predictorTimeouts.Load(),
 		"skipped":            g.stats.skipped.Load(),
 		"caller_gone":        g.stats.callerGone.Load(),
+		// Added counters; the counters above do not change
+		"reservations_deleted":      g.stats.reservationsDeleted.Load(),
+		"reservation_delete_errors": g.stats.reservationDeleteErrors.Load(),
 	})
 }
 
@@ -241,7 +247,9 @@ func (g *gate) decide(parent context.Context, group string, sql string, catalog 
 		g.stats.callerGone.Add(1)
 		return ""
 	}
-	ctx, cancel := context.WithTimeout(parent, g.cfg.predictorTimeout)
+	// The predictor call does not stop when the caller goes away: the gate must see the answer, so it can
+	// delete a reservation that was made for a caller that is gone. The predictor timeout still applies.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), g.cfg.predictorTimeout)
 	defer cancel()
 	payload, _ := json.Marshal(gateRequest{SQL: sql, Catalog: catalog, Schema: schema})
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, g.cfg.groups[group]+"/v1/gate", bytes.NewReader(payload))
@@ -270,6 +278,15 @@ func (g *gate) decide(parent context.Context, group string, sql string, catalog 
 		g.predictorFailed(ctx, parent, group, fmt.Errorf("invalid response: %w", err))
 		return ""
 	}
+	if parent.Err() != nil {
+		// The caller gave up while the predictor answered. Nobody gets the session properties, so the
+		// reservation would stay until its time limit or until a query of this fingerprint completes.
+		g.stats.callerGone.Add(1)
+		if decision.ReservationID != nil && *decision.ReservationID != "" {
+			g.deleteReservation(group, *decision.ReservationID)
+		}
+		return ""
+	}
 	session := encodeSession(decision.SessionProperties)
 	if session == "" {
 		g.stats.unknown.Add(1)
@@ -277,6 +294,32 @@ func (g *gate) decide(parent context.Context, group string, sql string, catalog 
 	}
 	g.stats.known.Add(1)
 	return session
+}
+
+// deleteReservation calls DELETE /v1/reservations/{id} on the predictor of the group. Best effort:
+// a failure is counted and logged, and the time limit of the reservation remains.
+func (g *gate) deleteReservation(group string, id string) {
+	ctx, cancel := context.WithTimeout(context.Background(), g.cfg.predictorTimeout)
+	defer cancel()
+	target := g.cfg.groups[group] + "/v1/reservations/" + url.PathEscape(id)
+	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, target, nil)
+	if err == nil {
+		var response *http.Response
+		response, err = g.client.Do(request)
+		if err == nil {
+			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<16))
+			response.Body.Close()
+			if response.StatusCode/100 != 2 {
+				err = fmt.Errorf("status %d", response.StatusCode)
+			}
+		}
+	}
+	if err != nil {
+		g.stats.reservationDeleteErrors.Add(1)
+		log.Printf("predictor %s: deleting reservation %s of a gone caller failed: %v", group, id, err)
+		return
+	}
+	g.stats.reservationsDeleted.Add(1)
 }
 
 func (g *gate) predictorFailed(ctx context.Context, parent context.Context, group string, err error) {

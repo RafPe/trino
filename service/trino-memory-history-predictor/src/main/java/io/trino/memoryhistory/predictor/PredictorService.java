@@ -16,6 +16,7 @@ package io.trino.memoryhistory.predictor;
 import io.trino.memoryhistory.fingerprint.QueryFingerprint;
 
 import java.sql.SQLException;
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,12 +30,17 @@ import static java.util.Objects.requireNonNull;
 public class PredictorService
 {
     private final PredictorConfig config;
-    private final HistoryRepository repository;
+    private final HistoryCache history;
 
     public PredictorService(PredictorConfig config, HistoryRepository repository)
     {
+        this(config, repository::lastRuns);
+    }
+
+    public PredictorService(PredictorConfig config, HistoryCache.HistorySource source)
+    {
         this.config = requireNonNull(config, "config is null");
-        this.repository = requireNonNull(repository, "repository is null");
+        this.history = new HistoryCache(source, Duration.ofMillis(config.historyCacheTtlMs()), System::nanoTime);
     }
 
     public PredictorConfig config()
@@ -56,7 +62,7 @@ public class PredictorService
             return response;
         }
 
-        List<HistoryRun> runs = repository.lastRuns(fingerprint.get().hash(), config.historyRuns());
+        List<HistoryRun> runs = history.lastRuns(fingerprint.get().hash(), config.historyRuns());
         Prediction prediction = PredictionRule.predict(runs, config.failureGrowthFactor());
         response.put("supported", true);
         response.put("fingerprint", fingerprint.get().hash());

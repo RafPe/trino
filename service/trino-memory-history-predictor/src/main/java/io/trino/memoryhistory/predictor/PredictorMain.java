@@ -30,8 +30,11 @@ public final class PredictorMain
         PredictorConfig config = PredictorConfig.fromEnvironment(System.getenv());
         HistoryRepository repository = new HistoryRepository(config);
         Reservations reservations = new Reservations(config, InstantSource.system());
+        PredictorService service = new PredictorService(config, repository);
+        // Before the server listens, so the first request finds open connections and loaded code
+        WarmUp.beforeStart(repository, service);
         PredictorServer server = new PredictorServer(
-                new PredictorService(config, repository),
+                service,
                 reservations,
                 new InetSocketAddress(config.port()));
         AutoRelease autoRelease = new AutoRelease(
@@ -43,10 +46,11 @@ public final class PredictorMain
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             autoRelease.close();
             server.close();
+            repository.close();
         }));
         server.start();
         autoRelease.start();
-        log.info("Memory history predictor listening on port %s (per-worker memory %s bytes, workers %s-%s)".formatted(
-                server.port(), config.perWorkerMemoryBytes(), config.minWorkers(), config.maxWorkers()));
+        log.info("Memory history predictor listening on port %s (per-worker memory %s bytes, workers %s-%s, history cache %s ms)".formatted(
+                server.port(), config.perWorkerMemoryBytes(), config.minWorkers(), config.maxWorkers(), config.historyCacheTtlMs()));
     }
 }

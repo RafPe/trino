@@ -133,3 +133,90 @@ Added time against `direct`, median, ms. "noise" = the 95% interval of the diffe
 - All workers are fixed at 2 for each cluster (no scaler in compose), and the W2 query needs 2 workers, so Trino never
   waited. The bench does not measure the wait for new workers.
 - Both gateways share one database. I did not test one gateway alone with its own database.
+
+## Before and after (2026-11-13): predictor connection pool, cache, warm-up; gate deletes orphan reservations
+
+### Where the 10–12 ms went
+
+I measured on the running lab with the old predictor image (`ad2e21dfa362`), from the host:
+
+| Part | Median |
+|---|---|
+| `GET /v1/health` (HTTP only) | 1.4 ms |
+| `POST /v1/predict` for a text that has no fingerprint (HTTP, JSON, parse, no database) | 1.6 ms |
+| `POST /v1/predict` for a fingerprint (all of it) | 14–15 ms |
+| `DriverManager.getConnection` (JDBC timing program on the host, same URL and timeouts) | 7.4 ms |
+| First history query on that new connection | 4.2 ms |
+| The same query on a reused connection | 0.3 ms |
+| Fingerprint of one SQL text, warm (in-process) | 0.17 ms |
+| JSON read and write, warm (in-process) | 0.04 ms |
+
+So about 11.6 ms of the 13 ms is the new connection for each request: the connection setup (SCRAM-SHA-256 login and
+a new PostgreSQL backend) and the first query of a cold backend. The fingerprint and JSON cost under 0.3 ms.
+After a restart, the first `/v1/gate` call took 546, 578 and 546 ms (three restarts).
+
+### What I changed
+
+- Predictor: a fixed pool of up to 17 connections (16 predictions + 1 for the automatic release), written with the JDK.
+  The timeouts and the 16-request limit stay. When a query fails on a pooled connection that is broken
+  (SQLSTATE class 08 or 57P, or the connection is not valid), the pool closes all idle connections and runs the
+  read once more on a new connection.
+- Predictor: a warm-up before the port listens. It opens 8 connections, runs the history query on each, runs the
+  prediction 100 times and sends 20 `/v1/predict` and `/v1/gate` requests to a temporary server on a free loopback
+  port (with its own reservations, which are dropped). If the database is down, the warm-up logs a warning and the
+  predictor starts anyway. The start (to the first healthy answer) is now about 1.6 s instead of 0.5 s.
+- Predictor: a cache of the history rows for each fingerprint. `HISTORY_CACHE_TTL_MS`, default 2000, `0` turns it off.
+  Staleness: a prediction can miss the rows that were written in the last 2 s. So a new fingerprint stays unknown,
+  and a new run (also a memory failure) changes the prediction, up to 2 s later than before. The automatic release
+  and the reservations do not use the cache. Failed reads are not cached.
+- Gate: the call to the predictor no longer stops when the caller goes away (the 200 ms predictor timeout still
+  applies). If the caller is gone when the answer arrives and the answer has a `reservationId`, the gate sends
+  `DELETE /v1/reservations/{id}` (best effort). New `/stats` counters: `reservations_deleted`,
+  `reservation_delete_errors`. The other counters do not change.
+  I changed the existing test `TestCallerGoneIsNotAPredictorError`: it expected no predictor call. Now the gate may
+  call the predictor, depending on when the server sees the closed connection, and must then delete the reservation.
+
+### Numbers
+
+Added time against `direct`, median, ms. Before = [results/BENCH-compose.md](results/BENCH-compose.md).
+After = [results/BENCH-compose-after.md](results/BENCH-compose-after.md) (second run), run 1 in
+`results/bench-compose-after-run1.jsonl`. Both after-runs were on a fresh lab.
+
+| | Before | After, run 1 | After, run 2 |
+|---|---|---|---|
+| W1 first request, `envoy-gated` | +12.8 | +2.3 | +2.2 |
+| W2 first request, `envoy-gated` | +12.6 | +2.2 | +2.2 |
+| W1 first request, `gateway` | +34.4 | +24.3 | +24.3 |
+| W2 first request, `gateway` | +31.6 | +21.6 | +21.6 |
+| W1 queries/s at 8 clients, `envoy-gated` | 163 | 252 | 308 |
+| W1 queries/s at 8 clients, `gateway` | 107 | 119 | 110 |
+| W1 queries/s at 8 clients, `direct` | 288 | 296 | 309 |
+| First `/v1/gate` after a predictor restart (curl on the host, 3 restarts) | 546–578 ms | 5–29 ms | |
+| Gate predictor timeouts during `up.sh` | 1 per predictor | 0 | 0 |
+
+- The first-request numbers are stable: the two after-runs agree within 0.1 ms, and the intervals do not overlap
+  with the baseline. The gate now adds about 2.2 ms on Envoy, and the gateway path about 2.7 ms over `gateway-plain`.
+- The queries per second at 8 clients are not stable. Another lab ran on the host (load average up to 15).
+  `envoy-plain`, which I did not change, gave 291 before and 262 and 188 after. So I only say that `envoy-gated`
+  at 8 clients is now in the range of `envoy-plain`; the `gateway` change is within noise.
+- With `/v1/predict` from the host: cache hit 1.9 ms, cache miss on a pooled connection 2.8 ms, health 1.1 ms.
+- In W4 with `GATE_DELAY_MS=2000`, the gate deleted 76 (run 1) and 73 (run 2) reservations of callers that had gone.
+  Before the change those reservations stayed until a query of the same fingerprint ended or the time limit passed.
+  All 17 checks pass in both runs, also "reservations back to 0".
+
+### Index on `query_history`
+
+The listener creates `(fingerprint, end_time DESC)`. The prediction query uses it. The automatic-release query
+(`WHERE end_time >= ? ORDER BY end_time, query_id`) cannot use it, because `end_time` is not the first column.
+With a temporary copy of the table with 200,000 rows, `EXPLAIN ANALYZE` showed a sequential scan of all rows,
+48 ms for each run. The predictor runs it every 2 s. An index on `(end_time)` would fix it. I did not change the
+listener.
+
+### Not checked
+
+- A gate timeout (200 ms) can still leave a reservation: the predictor makes it, but the gate never gets the id. A fix
+  needs a contract change (for example, the gate sends the id to `/v1/gate`), so I did not make it.
+- I did not restart PostgreSQL in the lab. The pool recovery is tested with `pg_terminate_backend` on every backend.
+- The cache has a fixed bound of 10,000 fingerprints. I did not measure its memory.
+- Concurrent cache misses for one fingerprint each read the database. I did not measure a burst of new fingerprints.
+- I did not measure the gate path on kind.

@@ -30,6 +30,9 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.Statement;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.InstantSource;
@@ -155,6 +158,64 @@ final class TestPredictorServer
             assertThat(response.statusCode()).isEqualTo(503);
             assertThat(MAPPER.readTree(response.body()).get("error").asText()).startsWith("history database unavailable");
             assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(10));
+        }
+    }
+
+    @Test
+    void testWarmUp()
+            throws Exception
+    {
+        PredictorConfig config = new PredictorConfig(postgres.getJdbcUrl(), Optional.of(postgres.getUsername()), Optional.of(postgres.getPassword()), GB, 2, 6, 1.2, 2.0, 10, 0);
+        try (HistoryRepository repository = new HistoryRepository(config)) {
+            assertThat(WarmUp.beforeStart(repository, new PredictorService(config, repository))).isTrue();
+            assertThat(repository.idleConnections()).isEqualTo(WarmUp.CONNECTIONS);
+        }
+    }
+
+    @Test
+    void testWarmUpWithDatabaseDown()
+            throws Exception
+    {
+        PredictorConfig config = new PredictorConfig("jdbc:postgresql://127.0.0.1:1/none", Optional.empty(), Optional.empty(), GB, 2, 6, 1.2, 2.0, 10, 0);
+        try (HistoryRepository repository = new HistoryRepository(config)) {
+            PredictorService service = new PredictorService(config, repository);
+            long start = System.nanoTime();
+            assertThat(WarmUp.beforeStart(repository, service)).isFalse();
+            assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(10));
+            // The server still starts and answers
+            try (PredictorServer started = new PredictorServer(service, new Reservations(config, InstantSource.system()), new InetSocketAddress("127.0.0.1", 0))) {
+                started.start();
+                HttpResponse<String> response = send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:%s/v1/health".formatted(started.port()))).GET().build());
+                assertThat(response.statusCode()).isEqualTo(200);
+            }
+        }
+    }
+
+    @Test
+    void testPredictAfterDatabaseConnectionsAreKilled()
+            throws Exception
+    {
+        // Cache off, so every request reads the database
+        PredictorConfig config = new PredictorConfig(postgres.getJdbcUrl(), Optional.of(postgres.getUsername()), Optional.of(postgres.getPassword()), GB, 2, 6, 1.2, 2.0, 10, 0, "10m", 3600, 2000, 0);
+        try (HistoryRepository repository = new HistoryRepository(config);
+                PredictorServer fresh = new PredictorServer(new PredictorService(config, repository), new Reservations(config, InstantSource.system()), new InetSocketAddress("127.0.0.1", 0))) {
+            fresh.start();
+            repository.warmUp(4, "none");
+            URI predict = URI.create("http://127.0.0.1:%s/v1/predict".formatted(fresh.port()));
+            String body = "{\"sql\": \"select count(*) from orders where orderkey > 7\", \"catalog\": \"tpch\", \"schema\": \"tiny\"}";
+            assertThat(send(HttpRequest.newBuilder(predict).POST(ofString(body)).build()).statusCode()).isEqualTo(200);
+
+            // As after a database restart: the pooled backends are gone
+            try (Connection connection = DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+                    Statement statement = connection.createStatement()) {
+                statement.execute("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND backend_type = 'client backend' AND datname = current_database()");
+            }
+            Thread.sleep(200);
+
+            HttpResponse<String> response = send(HttpRequest.newBuilder(predict).POST(ofString(body)).build());
+            assertThat(response.statusCode()).isEqualTo(200);
+            assertThat(MAPPER.readTree(response.body()).get("known").asBoolean()).isTrue();
+            assertThat(repository.idleConnections()).isEqualTo(1);
         }
     }
 

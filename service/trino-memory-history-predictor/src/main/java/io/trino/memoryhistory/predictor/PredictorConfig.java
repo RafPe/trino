@@ -33,11 +33,13 @@ public record PredictorConfig(
         int port,
         String gateMaxWait,
         long gateReservationTtlSeconds,
-        long autoReleaseIntervalMs)
+        long autoReleaseIntervalMs,
+        long historyCacheTtlMs)
 {
     public static final String DEFAULT_GATE_MAX_WAIT = "10m";
     public static final long DEFAULT_GATE_RESERVATION_TTL_SECONDS = 3600;
     public static final long DEFAULT_AUTO_RELEASE_INTERVAL_MS = 2000;
+    public static final long DEFAULT_HISTORY_CACHE_TTL_MS = 2000;
 
     // The format of a Trino duration session property, for example 10m or 90s
     private static final Pattern DURATION = Pattern.compile("\\d+(\\.\\d+)?(ns|us|ms|s|m|h|d)");
@@ -57,6 +59,38 @@ public record PredictorConfig(
         checkArgument(DURATION.matcher(gateMaxWait).matches(), "GATE_MAX_WAIT must be a duration such as 10m");
         checkArgument(gateReservationTtlSeconds > 0, "GATE_RESERVATION_TTL_SECONDS must be positive");
         checkArgument(autoReleaseIntervalMs > 0, "AUTO_RELEASE_INTERVAL_MS must be positive");
+        checkArgument(historyCacheTtlMs >= 0, "HISTORY_CACHE_TTL_MS must not be negative");
+    }
+
+    public PredictorConfig(
+            String dbUrl,
+            Optional<String> dbUser,
+            Optional<String> dbPassword,
+            long perWorkerMemoryBytes,
+            int minWorkers,
+            int maxWorkers,
+            double safetyFactor,
+            double failureGrowthFactor,
+            int historyRuns,
+            int port,
+            String gateMaxWait,
+            long gateReservationTtlSeconds,
+            long autoReleaseIntervalMs)
+    {
+        this(dbUrl,
+                dbUser,
+                dbPassword,
+                perWorkerMemoryBytes,
+                minWorkers,
+                maxWorkers,
+                safetyFactor,
+                failureGrowthFactor,
+                historyRuns,
+                port,
+                gateMaxWait,
+                gateReservationTtlSeconds,
+                autoReleaseIntervalMs,
+                DEFAULT_HISTORY_CACHE_TTL_MS);
     }
 
     public PredictorConfig(
@@ -83,7 +117,8 @@ public record PredictorConfig(
                 port,
                 DEFAULT_GATE_MAX_WAIT,
                 DEFAULT_GATE_RESERVATION_TTL_SECONDS,
-                DEFAULT_AUTO_RELEASE_INTERVAL_MS);
+                DEFAULT_AUTO_RELEASE_INTERVAL_MS,
+                DEFAULT_HISTORY_CACHE_TTL_MS);
     }
 
     public static PredictorConfig fromEnvironment(Map<String, String> environment)
@@ -101,7 +136,8 @@ public record PredictorConfig(
                 Integer.parseInt(environment.getOrDefault("PORT", "8090")),
                 environment.getOrDefault("GATE_MAX_WAIT", DEFAULT_GATE_MAX_WAIT),
                 Long.parseLong(environment.getOrDefault("GATE_RESERVATION_TTL_SECONDS", String.valueOf(DEFAULT_GATE_RESERVATION_TTL_SECONDS))),
-                Long.parseLong(environment.getOrDefault("AUTO_RELEASE_INTERVAL_MS", String.valueOf(DEFAULT_AUTO_RELEASE_INTERVAL_MS))));
+                Long.parseLong(environment.getOrDefault("AUTO_RELEASE_INTERVAL_MS", String.valueOf(DEFAULT_AUTO_RELEASE_INTERVAL_MS))),
+                Long.parseLong(environment.getOrDefault("HISTORY_CACHE_TTL_MS", String.valueOf(DEFAULT_HISTORY_CACHE_TTL_MS))));
     }
 
     /**
