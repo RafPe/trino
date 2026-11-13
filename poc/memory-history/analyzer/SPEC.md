@@ -18,6 +18,7 @@ One record for each completed query. The tool reads CSV or JSON Lines. A mapping
 |---|---|---|
 | `query` | yes | The SQL text |
 | `end_time` | yes | When the query ended (ISO 8601, or epoch seconds or milliseconds) |
+| `start_time` | no | When the query started. With this field, a query sees only runs that ended before it started. |
 | `peak_memory_bytes` | yes | Peak user memory of the query |
 | `state` | yes | `FINISHED` or `FAILED` (other values are mapped with an option) |
 | `error_code` | no | For example `EXCEEDED_LOCAL_MEMORY_LIMIT` |
@@ -38,7 +39,7 @@ The tool can also read the `query_history` table of the listener directly.
 - **Volume:** records, supported records, time range, shapes.
 - **Repeat rate:** the part of the queries that had an earlier run of the same shape. The same number for exact text. Both numbers for all queries, for queries with a peak of 1 GB or more (the limit is an option), and for memory failures.
 - **Memory spread of one shape:** for shapes with 3 or more finished runs, the ratio of the largest to the smallest peak. Median, p90 and maximum across shapes, and the 20 worst shapes. The same for shapes with a peak of 1 GB or more.
-- **Replay of the predictor rule:** go through the log in time order. For each query, predict from the earlier runs with the rule of the predictor (largest peak of the last 10 finished runs. After a memory failure that is newer than the last finished run: largest known peak × 2). Report the hit rate, the ratio predicted to actual (median, p10, p90), the part predicted too low by more than 20%, and the part predicted too high by more than a factor of 2. All of this also for queries of 1 GB or more.
+- **Replay of the predictor rule:** go through the log in time order. For each query, predict from the last 10 earlier runs of the shape, with the rule of the predictor (largest peak of the finished runs. After a memory failure that is newer than the last finished run: largest known peak × 2). Report the hit rate, the ratio predicted to actual (median, p10, p90), the part predicted too low by more than 20%, and the part predicted too high by more than a factor of 2. All of this also for queries of 1 GB or more.
 - **Memory failures:** how many, and how many had an earlier run of the same shape. For those, what the rule predicted.
 - **Input size check (only with input sizes):** the same replay, but an earlier run counts only if its input bytes are within 10% of the input bytes of this query (the limit is an option). Report the hit rate and the ratio again, next to the numbers without the check. Note: the real input size is not known before a query runs, so this shows the best case.
 - **What was not possible:** records that the parser did not accept, with the 10 most frequent reasons.
