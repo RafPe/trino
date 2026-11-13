@@ -12,6 +12,7 @@ All `file:line` references point at that commit.
 
 | File | What it holds |
 |---|---|
+| [00-design-and-decisions.md](00-design-and-decisions.md) | **Start here.** Goal, upstream discussion (issues and Slack thread), decisions with reasons, architecture, results, open questions |
 | [01-issue.md](01-issue.md) | Snapshot of the issue text and its comments |
 | [02-scope-synthesis.md](02-scope-synthesis.md) | Main conclusions: what the proposal gets wrong about the code, design problems, and scope tiers A/B/C |
 | [03-implementation-plan.md](03-implementation-plan.md) | Phased plan, parallel workstreams, local environment, and child workspaces |
@@ -42,9 +43,14 @@ All `file:line` references point at that commit.
 
 - Only `ReorderJoins` consumes the cost calculator for plan selection; the join distribution rules use statistics. See the note in `05-tier-c-assessment.md` (2026-11-11).
 
-## Status and decisions pending (as of 2026-11-08)
+## Status (2026-11-13)
 
-- [ ] Launch WS1–WS3 implementation, with the WS2 estimator based on statistics.
-- [ ] Narrow the Tier C workspace to the missing statistics rules (Window, MarkDistinct, GroupId, Unnest, grouping-set aggregation).
-- [ ] Post corrections and questions on #29598 to get maintainers' input (see the questions in `05-tier-c-assessment.md` §6 and `02-scope-synthesis.md`).
+- [x] Corrections and questions posted on #29598; new issue #32089 opened for the missing cost/stats estimates. No maintainer reply yet.
+- [x] Direction agreed in the Slack thread: history-based prediction without Trino core changes.
+- [x] PoC built and tested on docker compose and on kind + KEDA: branch `RafPe/memory-history-poc`.
+- [x] PoC reviewed by Opus and Codex; findings fixed.
+- [ ] Collect-only run of the listener on real traffic.
+- [ ] Share results in the Slack thread.
+- [ ] Review the small upstream-candidate branches (`RafPe/stats-*`, `RafPe/docs-required-workers`, `RafPe/capacity-ws1-gauges`); no PRs opened.
 - [ ] Coordinate with #31287 before touching `AggregationStatsRule` or the cost calculator.
+- On hold: in-core work (`RafPe/capacity-ws2-estimator`, `RafPe/capacity-ws3-async-start`).
