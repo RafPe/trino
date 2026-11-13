@@ -122,7 +122,7 @@ Listener rules:
 
 ## Contract 3: predictor HTTP API (JSON, port 8090)
 
-Config by environment variables: `DB_URL`, `DB_USER`, `DB_PASSWORD`, `PER_WORKER_MEMORY_BYTES` (the cluster's `query.max-memory-per-node`), `MIN_WORKERS` (default 2), `MAX_WORKERS` (default 6), `SAFETY_FACTOR` (default 1.2), `FAILURE_GROWTH_FACTOR` (default 2.0), `HISTORY_RUNS` (default 10), `PORT` (default 8090).
+Config by environment variables: `DB_URL`, `DB_USER`, `DB_PASSWORD`, `PER_WORKER_MEMORY_BYTES` (the cluster's `query.max-memory-per-node`), `MIN_WORKERS` (default 2), `MAX_WORKERS` (default 6), `SAFETY_FACTOR` (service default 1.2; the PoC deployments set 1.5, see README), `FAILURE_GROWTH_FACTOR` (default 2.0), `HISTORY_RUNS` (default 10), `PORT` (default 8090).
 
 **`POST /v1/predict`** — request `{"sql": "...", "catalog": "tpcds", "schema": "sf10"}`
 

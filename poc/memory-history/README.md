@@ -10,14 +10,26 @@ Trino workers **before** the query runs. No Trino core changes.
 
 ## How it works
 
+```mermaid
+flowchart LR
+    client([Client]) -->|1 query| gate[Gate<br/>gate.py]
+    gate -->|2 seen before?<br/>how much memory?| predictor[Predictor]
+    predictor -->|3 look up| db[(History DB<br/>PostgreSQL)]
+    gate -->|4 reserve| predictor
+    scaler[Autoscaler<br/>KEDA or scaler.py] -->|4 read required workers| predictor
+    scaler -->|4 add workers| workers
+    gate -->|5 submit with<br/>required_workers_count| coord
+    subgraph trino [Trino, stock release]
+        coord[Coordinator<br/>holds the query until<br/>the workers have joined]
+        workers[Workers<br/>2 to 6]
+        coord --> workers
+    end
+    coord -.->|6 after the query: fingerprint<br/>and peak memory| db
 ```
-client ──▶ gate.py ──(1) POST /v1/predict ─────────▶ predictor ──reads──▶ PostgreSQL (query_history)
-              │       (2) POST /v1/reservations ───▶    │  ▲                     ▲
-              │                                         │  └─ GET /v1/required-workers ◀── KEDA (k8s) or scaler.py (compose)
-              │ (3) submit with session property        │                        │ writes
-              ▼     required_workers_count=N            │                        │
-        Trino coordinator ── waits for N workers ── runs query ── QueryCompletedEvent ──▶ memory-history event listener
-```
+
+Steps 1–5 act on a query before it runs. Step 6 (dashed) is how the system learns: the event listener
+plugin inside the coordinator records every completed query. An unknown query shape skips steps 4–5 and
+runs unchanged.
 
 | Part | Where | What it does |
 |---|---|---|
