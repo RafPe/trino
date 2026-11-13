@@ -7,6 +7,7 @@ Trino workers **before** the query runs. It does not change Trino core.
 - Results of the full run: [results/REPORT.md](results/REPORT.md)
 - Cluster calibration: [workload/CALIBRATION.md](workload/CALIBRATION.md)
 - Kubernetes details: [k8s/README-k8s.md](k8s/README-k8s.md)
+- Install only the listener on an existing Trino, to collect data: [INSTALL-existing-cluster.md](INSTALL-existing-cluster.md)
 
 ## How it works
 
